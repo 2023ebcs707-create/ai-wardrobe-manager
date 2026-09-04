@@ -1,0 +1,14 @@
+{
+  "name": "ai-wardrobe-manager",
+  "private": true,
+  "scripts": {
+    "test": "pnpm -r --sequential test",
+    "test:integration": "pnpm -F @wardrobe/api test:integration",
+    "test:ai": "docker compose build ai && docker compose run --rm --no-deps ai pytest && docker compose up -d ai >/dev/null",
+    "typecheck": "pnpm -r --sequential typecheck",
+    "dev:services": "docker compose up -d && ./scripts/wait-for-services.sh",
+    "dev:api": "pnpm -F @wardrobe/api dev",
+    "dev:mobile": "pnpm -F @wardrobe/mobile start",
+    "device": "./scripts/device-setup.sh"
+  }
+}

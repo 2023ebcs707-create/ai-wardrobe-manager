@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Expo
+.expo/
+apps/mobile/android/
+apps/mobile/ios/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Secrets and local config
+.env
+*.local
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Project documentation, verification artefacts and agent scaffolding
+# (kept out of the code repository on purpose)
+docs/
+.superpowers/
+VERIFICATION.md
+HANDOVER.md
+CLAUDE.md
+AGENTS.md
+
+# Frontend design exploration (local only — HTML mockups for choosing a direction)
+design/

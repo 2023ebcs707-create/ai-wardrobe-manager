@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pytest
+httpx2
+python-multipart
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+open_clip_torch
+pillow
+numpy
+scikit-learn
