@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -7,6 +7,7 @@ import type { ItemColor } from '@wardrobe/shared';
 import { MonthGrid } from '../../src/calendar/MonthGrid';
 import {
   dateFromDayKey,
+  indexPlansByDay,
   indexWearsByDay,
   localDayKey,
   monthCells,
@@ -14,6 +15,9 @@ import {
   monthName,
   shiftMonth,
 } from '../../src/calendar/month';
+import { deleteOutfitPlan } from '../../src/calendar/api';
+import { usePlannedOutfits } from '../../src/calendar/usePlannedOutfits';
+import { consumePlansDirty, markPlansDirty } from '../../src/calendar/plansDirty';
 import { useAuth } from '../../src/auth/AuthContext';
 import { consumeTrackingDirty } from '../../src/tracking/trackingDirty';
 import { useWearHistory } from '../../src/tracking/useWearHistory';
@@ -51,7 +55,7 @@ const WEEKDAYS = [
  */
 export default function CalendarScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { events, activity, error, loadMore, refresh, hasMore } = useWearHistory();
   const { byId: itemsById } = useItemIndex();
 
@@ -72,6 +76,23 @@ export default function CalendarScreen() {
   const cells = useMemo(() => monthCells(cursor.year, cursor.month), [cursor]);
 
   /**
+   * The visible month as a range, for the plans endpoint.
+   *
+   * A whole month of local time, from midnight on the 1st to the last
+   * millisecond of the last day. The bounds are generous on purpose: the API
+   * compares instants, and a range that stopped at the last day's midnight
+   * would miss every plan on it.
+   */
+  const planRange = useMemo(() => {
+    const from = new Date(cursor.year, cursor.month, 1);
+    const to = new Date(cursor.year, cursor.month + 1, 0, 23, 59, 59, 999);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, [cursor]);
+
+  const { plans, error: plansError, refresh: refreshPlans } = usePlannedOutfits(planRange);
+  const plansByDay = useMemo(() => indexPlansByDay(plans), [plans]);
+
+  /**
    * Page backwards until the visible month is definitely complete.
    *
    * `GET /wear-history` is newest-first, so a month older than the first page
@@ -90,7 +111,11 @@ export default function CalendarScreen() {
   useFocusEffect(
     useCallback(() => {
       if (consumeTrackingDirty('calendar')) refresh();
-    }, [refresh]),
+      // A separate bit, consumed separately: a plan moves no wear counts, so
+      // the two must not be able to swallow each other's signal. See
+      // `src/calendar/plansDirty.ts`.
+      if (consumePlansDirty('calendar')) refreshPlans();
+    }, [refresh, refreshPlans]),
   );
 
   const monthPrefix = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`;
@@ -111,8 +136,45 @@ export default function CalendarScreen() {
   );
 
   const selected = wearsByDay[selectedKey];
+  const selectedPlan = plansByDay[selectedKey];
   const selectedDate = dateFromDayKey(selectedKey);
   const selectedIsAhead = selectedKey > todayKey;
+
+  /**
+   * Cancelling a plan.
+   *
+   * A single tap with no two-step confirmation, deliberately unlike deleting
+   * an outfit or an item: undoing this is just planning again from the same
+   * screen, so the cost of a mis-tap is one re-tap. A confirmation prompt
+   * would be heavier than the thing it guards.
+   */
+  const [cancellingPlan, setCancellingPlan] = useState(false);
+  const cancellingRef = useRef(false);
+
+  const onCancelPlan = useCallback(async () => {
+    if (cancellingRef.current) return;
+    if (selectedPlan === undefined) return;
+    cancellingRef.current = true;
+    setCancellingPlan(true);
+
+    try {
+      await deleteOutfitPlan(selectedPlan.first.id, token);
+    } catch {
+      // A 404 means it is already gone — from another device, or a double tap
+      // that beat the ref — and the outcome is the one the user asked for.
+      // Every other failure is reported by the refetch below showing the plan
+      // still there, which is the honest signal: this screen has no room for a
+      // banner under the day panel, and the plan reappearing IS the message.
+    } finally {
+      cancellingRef.current = false;
+      setCancellingPlan(false);
+      // Always, on both paths: the server is the authority on whether the plan
+      // is gone, and re-reading is what keeps this screen from claiming a
+      // deletion that did not happen.
+      markPlansDirty();
+      refreshPlans();
+    }
+  }, [refreshPlans, selectedPlan, token]);
 
   const selectedItems = useMemo(
     () =>
@@ -124,6 +186,20 @@ export default function CalendarScreen() {
     [selected, itemsById],
   );
   const selectedColors: ItemColor[] = selectedItems.flatMap((item) => item.colors);
+
+  // The plan's own garments, resolved the same way the wear's are — from the
+  // plan's SNAPSHOTTED itemIds, so an outfit edited since it was planned still
+  // shows what was actually planned.
+  const plannedItems = useMemo(
+    () =>
+      selectedPlan === undefined
+        ? []
+        : selectedPlan.first.itemIds
+            .map((id) => itemsById[id])
+            .filter((item) => item !== undefined),
+    [selectedPlan, itemsById],
+  );
+  const plannedColors: ItemColor[] = plannedItems.flatMap((item) => item.colors);
 
   const showFirstLoad = activity === 'loading' && events.length === 0;
 
@@ -153,6 +229,21 @@ export default function CalendarScreen() {
             message={error}
             onRetry={refresh}
             retryAccessibilityLabel="Try loading your wear history again"
+          />
+        ) : null}
+
+        {/* Its own plate rather than folded into the one above: the two reads
+            fail independently, and a month whose history loaded but whose
+            plans did not is a grid that is silently missing half its marks —
+            the failure this screen has no other way to show. */}
+        {plansError !== null ? (
+          <ErrorPlate
+            testID="calendar-plans-error"
+            messageTestID="calendar-plans-error-message"
+            retryTestID="calendar-plans-retry"
+            message={plansError}
+            onRetry={refreshPlans}
+            retryAccessibilityLabel="Try loading your planned outfits again"
           />
         ) : null}
 
@@ -187,6 +278,7 @@ export default function CalendarScreen() {
               month={cursor.month}
               cells={cells}
               wearsByDay={wearsByDay}
+              plansByDay={plansByDay}
               itemsById={itemsById}
               // Null in any month that is not this one, so no cell in a past
               // month is ringed as though it were today.
@@ -203,6 +295,14 @@ export default function CalendarScreen() {
                 <Text style={styles.legendText}>{entry.name}</Text>
               </View>
             ))}
+            {/* The hollow marker, explained. The occasion pips above say what a
+                day's dot means by colour; this says what its SHAPE means, which
+                is the one distinction a colour-blind or greyscale reader has to
+                go on. Without it the ring is an unexplained mark. */}
+            <View testID="calendar-legend-planned" style={styles.legendItem}>
+              <View style={styles.legendPlanned} />
+              <Text style={styles.legendText}>planned</Text>
+            </View>
           </View>
         </View>
 
@@ -212,20 +312,76 @@ export default function CalendarScreen() {
           aside={selected === undefined ? undefined : relativeDay(selectedKey, todayKey)}
           style={styles.daySection}
         >
-          {selected === undefined ? (
+          {selected === undefined && selectedPlan !== undefined ? (
+            /* A future (or today) day with a plan on it. The plan is rendered
+               with the same Panel/Strip treatment a worn day gets, because it
+               is the same kind of object — an outfit on a day — and drawing it
+               differently would make it read as a different feature rather
+               than as a different tense. */
+            <>
+              <Panel testID="calendar-day-plan" glow={plannedColors}>
+                {plannedItems.length > 0 ? (
+                  <Strip uris={plannedItems.map((i) => i.thumbnailUrl ?? i.imageUrl)} />
+                ) : null}
+                <View style={styles.wearFoot}>
+                  <Text style={text.title} numberOfLines={1}>
+                    {/* Never "Outfit deleted", for the same reason the worn
+                        panel is not: the name is absent both when the outfit
+                        is gone and when it never had one. */}
+                    {selectedPlan.first.outfitName ?? 'Unnamed outfit'}
+                  </Text>
+                  {selectedPlan.first.occasion === undefined ? null : (
+                    <Lozenge>
+                      <Pip hex={occasionColor(selectedPlan.first.occasion)} size={7} />
+                      <Text style={styles.occasionText}>{selectedPlan.first.occasion}</Text>
+                    </Lozenge>
+                  )}
+                </View>
+                <Text style={styles.alsoWorn}>
+                  {selectedPlan.count > 1
+                    ? `planned, and ${selectedPlan.count - 1} more ${selectedPlan.count === 2 ? 'outfit' : 'outfits'} that day`
+                    : 'planned'}
+                </Text>
+              </Panel>
+              <Button
+                testID="calendar-cancel-plan"
+                label={cancellingPlan ? 'Cancelling…' : 'Cancel this plan'}
+                variant="ghost"
+                onPress={() => void onCancelPlan()}
+                disabled={cancellingPlan}
+                style={styles.dayButton}
+              />
+              <Button
+                testID="calendar-plan-another"
+                label="Plan another outfit for this day"
+                variant="ghost"
+                onPress={() => router.push(`/calendar/plan/${selectedKey}`)}
+                style={styles.dayButton}
+              />
+            </>
+          ) : selected === undefined ? (
             <Panel testID="calendar-day-empty">
               <Text style={styles.emptyTitle}>
-                {selectedIsAhead ? 'Not yet' : 'Nothing logged'}
+                {selectedIsAhead ? 'Nothing planned' : 'Nothing logged'}
               </Text>
               <Text style={styles.emptyHint}>
                 {selectedIsAhead
-                  ? 'You can log this day once it has happened.'
+                  ? 'Deciding now means one less decision on the day.'
                   : 'Logging what you wore keeps your wear counts honest and teaches the suggestions what you actually reach for.'}
               </Text>
-              {/* No button on a future day: `POST /wear-history` rejects a
-                  `wornAt` in the future outright, so offering it would be
-                  offering a 400. */}
-              {selectedIsAhead ? null : (
+              {/* A future day gets PLAN, never LOG: `POST /wear-history`
+                  rejects a future `wornAt` outright, so offering to log it
+                  would be offering a 400. A past day gets the reverse, for the
+                  mirror-image reason — `POST /outfit-plans` rejects a
+                  `plannedFor` that has already gone. */}
+              {selectedIsAhead ? (
+                <Button
+                  testID="calendar-plan"
+                  label="Plan an outfit"
+                  onPress={() => router.push(`/calendar/plan/${selectedKey}`)}
+                  style={styles.dayButton}
+                />
+              ) : (
                 <Button
                   testID="calendar-log"
                   label="Log what you wore"
@@ -347,6 +503,15 @@ const styles = StyleSheet.create({
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 13, marginTop: space.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendText: { ...text.meta, fontSize: 11.5 },
+  // Matches `MonthGrid`'s `planned` marker: hollow where an occasion Pip is
+  // filled. Sized to `Pip size={8}` so the two read as one row of marks.
+  legendPlanned: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: color.soft,
+  },
 
   daySection: { paddingTop: space.xxl },
   wearFoot: {

@@ -6,7 +6,11 @@ import type { PublicClothingItem, PublicSuggestions } from '@wardrobe/shared';
 import { ApiClientError } from '../../src/api/client';
 import { useAuth } from '../../src/auth/AuthContext';
 import { fetchSuggestions } from '../../src/suggestions/api';
-import { laundryNoticeFor, useSuggestions } from '../../src/suggestions/useSuggestions';
+import {
+  laundryNoticeFor,
+  retiredNoticeFor,
+  useSuggestions,
+} from '../../src/suggestions/useSuggestions';
 
 // `./api` exports two plain functions and (erased) interfaces — no class — so
 // a factory mock here is safe in the way a mock of `../../src/api/client`
@@ -47,6 +51,7 @@ function item(id: string, category: PublicClothingItem['category']): PublicCloth
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'ai',
     createdAt: '2026-08-01T10:00:00.000Z',
@@ -68,6 +73,7 @@ function body(overrides: Partial<PublicSuggestions> = {}): PublicSuggestions {
       },
     ],
     excludedInLaundry: 0,
+    excludedRetired: 0,
     ...overrides,
   };
 }
@@ -203,14 +209,18 @@ describe('useSuggestions · the 503 is not an empty list', () => {
     // The other half of the same distinction, and the reason the two tests are
     // written as a pair: a hook that collapsed them would pass whichever one
     // was written first.
-    mockedFetchSuggestions.mockResolvedValueOnce({ suggestions: [], excludedInLaundry: 0 });
+    mockedFetchSuggestions.mockResolvedValueOnce({
+      suggestions: [],
+      excludedInLaundry: 0,
+      excludedRetired: 0,
+    });
 
     const { result } = await renderHook(() => useSuggestions());
 
     await waitFor(() => expect(result.current.activity).toBe('idle'));
     expect(result.current.unavailable).toBe(false);
     expect(result.current.error).toBeNull();
-    expect(result.current.snapshot).toEqual({ suggestions: [], laundryNotice: null });
+    expect(result.current.snapshot).toEqual({ suggestions: [], laundryNotice: null, retiredNotice: null });
   });
 
   it('never raises unavailable without an error to go with it', async () => {
@@ -429,6 +439,85 @@ describe('laundryNoticeFor', () => {
   });
 });
 
+describe('retiredNoticeFor', () => {
+  // Every word of the `laundryNoticeFor` contract above applies here, for the
+  // same reason and against a different count: `excludedRetired` is every
+  // retired item in the wardrobe, not a number of suggestions that were
+  // withheld.
+  it('states a fact about the wardrobe, in the sanctioned wording', () => {
+    expect(retiredNoticeFor(3)).toBe('3 items are retired');
+  });
+
+  it('agrees with its verb in the singular', () => {
+    expect(retiredNoticeFor(1)).toBe('1 item is retired');
+  });
+
+  it('says nothing at all when the wardrobe has nothing retired', () => {
+    expect(retiredNoticeFor(0)).toBeNull();
+    expect(retiredNoticeFor(-1)).toBeNull();
+  });
+
+  it('says nothing rather than "undefined items are retired"', () => {
+    // `apiRequest` ends in `parsed as T`, so the `number` in this signature is
+    // an assertion about the wire rather than a guarantee from it.
+    const missing = undefined as unknown as number;
+    expect(retiredNoticeFor(missing)).toBeNull();
+    expect(retiredNoticeFor(Number.NaN)).toBeNull();
+    expect(retiredNoticeFor('3' as unknown as number)).toBeNull();
+    expect(retiredNoticeFor(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('never asserts that retiring caused a thin result', () => {
+    for (const count of [1, 2, 3, 17]) {
+      const notice = retiredNoticeFor(count) as string;
+      expect(notice).toBe(`${count} ${count === 1 ? 'item is' : 'items are'} retired`);
+      expect(notice).not.toMatch(
+        /suggestion|outfit|hidden|hiding|withheld|excluded|left out|unavailable|because|so that|fewer|would have/i,
+      );
+    }
+  });
+
+  it('is a SEPARATE sentence from the laundry one, never merged', () => {
+    // Merging the two counts would produce a number that cannot be un-added
+    // back into "how many are in the wash" and "how many are retired" — two
+    // different actions a user might take in response.
+    expect(retiredNoticeFor(2)).not.toBe(laundryNoticeFor(2));
+    expect(retiredNoticeFor(2)).not.toMatch(/laundry/i);
+  });
+});
+
+describe('useSuggestions · the retired notice', () => {
+  it('builds the notice from excludedRetired', async () => {
+    mockedFetchSuggestions.mockResolvedValueOnce(body({ excludedRetired: 2 }));
+
+    const { result } = await renderHook(() => useSuggestions());
+    await waitFor(() => expect(result.current.activity).toBe('idle'));
+
+    expect(result.current.snapshot?.retiredNotice).toBe('2 items are retired');
+  });
+
+  it('leaves the notice null when nothing is retired', async () => {
+    mockedFetchSuggestions.mockResolvedValueOnce(body({ excludedRetired: 0 }));
+
+    const { result } = await renderHook(() => useSuggestions());
+    await waitFor(() => expect(result.current.activity).toBe('idle'));
+
+    expect(result.current.snapshot?.retiredNotice).toBeNull();
+  });
+
+  it('carries both notices independently', async () => {
+    mockedFetchSuggestions.mockResolvedValueOnce(
+      body({ excludedInLaundry: 3, excludedRetired: 1 }),
+    );
+
+    const { result } = await renderHook(() => useSuggestions());
+    await waitFor(() => expect(result.current.activity).toBe('idle'));
+
+    expect(result.current.snapshot?.laundryNotice).toBe('3 items are in the laundry');
+    expect(result.current.snapshot?.retiredNotice).toBe('1 item is retired');
+  });
+});
+
 describe('useSuggestions · the laundry notice', () => {
   it('builds the notice from excludedInLaundry', async () => {
     mockedFetchSuggestions.mockResolvedValueOnce(body({ excludedInLaundry: 3 }));
@@ -453,14 +542,18 @@ describe('useSuggestions · the laundry notice', () => {
     // accessories. The shortlist is empty because there was no bottom to pair
     // with, and the three garments in the wash are a coincidence — so the
     // sentence beside the empty list must not claim they caused it.
-    mockedFetchSuggestions.mockResolvedValueOnce({ suggestions: [], excludedInLaundry: 3 });
+    mockedFetchSuggestions.mockResolvedValueOnce({
+      suggestions: [],
+      excludedInLaundry: 3,
+      excludedRetired: 0,
+    });
 
     const { result } = await renderHook(() => useSuggestions());
     await waitFor(() => expect(result.current.activity).toBe('idle'));
 
     expect(result.current.snapshot).toEqual({
       suggestions: [],
-      laundryNotice: '3 items are in the laundry',
+      laundryNotice: '3 items are in the laundry', retiredNotice: null,
     });
   });
 
@@ -475,8 +568,14 @@ describe('useSuggestions · the laundry notice', () => {
     await waitFor(() => expect(result.current.activity).toBe('idle'));
 
     expect(result.current.snapshot).not.toHaveProperty('excludedInLaundry');
+    // `excludedRetired` is withheld for the identical reason — see
+    // `retiredNoticeFor`. The key list is exhaustive on purpose: a raw count
+    // added to the snapshot fails here rather than quietly becoming available
+    // to whoever writes the next screen.
+    expect(result.current.snapshot).not.toHaveProperty('excludedRetired');
     expect(Object.keys(result.current.snapshot ?? {}).sort()).toEqual([
       'laundryNotice',
+      'retiredNotice',
       'suggestions',
     ]);
   });

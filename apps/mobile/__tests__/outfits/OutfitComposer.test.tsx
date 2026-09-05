@@ -51,6 +51,7 @@ function item(id: string, category: ItemCategory = 'tshirt'): PublicClothingItem
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',
@@ -946,6 +947,37 @@ describe('OutfitComposer', () => {
 
     expect(isSelected('b')).toBe(true);
     expect(screen.getByTestId('outfit-count')).toHaveTextContent('1 selected');
+  });
+
+  /**
+   * The deliberate OPPOSITE of the two in-laundry tests above, and the pair
+   * has to be read together: an in-laundry garment stays selectable because
+   * wearing something from the wash is a real choice the user is entitled to
+   * make, while a RETIRED garment is one they have said is out of the wardrobe
+   * altogether. `resolveOwnedItems` rejects it server-side too, so a tile that
+   * rendered here would be a tap that 400s on save — the one error this
+   * screen's "press save again" contract cannot recover from.
+   */
+  it('hides retired items from the composer grid', async () => {
+    const retired = { ...B, retired: true };
+    mockedUseWardrobe.mockReturnValue(wardrobe({ items: [A, retired, C] }));
+
+    await render(<OutfitComposer />);
+
+    expect(screen.queryByTestId('item-tile-b')).toBeNull();
+    // The others are untouched: this is per item, not a grid that gave up.
+    expect(screen.getByTestId('item-tile-a')).toBeTruthy();
+    expect(screen.getByTestId('item-tile-c')).toBeTruthy();
+  });
+
+  it('cannot select a retired item, because there is no tile to tap', async () => {
+    const retired = { ...B, retired: true };
+    mockedUseWardrobe.mockReturnValue(wardrobe({ items: [A, retired, C] }));
+
+    await render(<OutfitComposer />);
+
+    expect(screen.queryByTestId('item-tile-b')).toBeNull();
+    expect(screen.getByTestId('outfit-count')).toHaveTextContent('0 selected');
   });
 
   it('pages the wardrobe as the grid is scrolled', async () => {

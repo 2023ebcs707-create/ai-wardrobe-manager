@@ -98,6 +98,21 @@ export interface PublicSuggestions {
    */
   excludedInLaundry: number;
   /**
+   * How many of the caller's items were withheld from the engine because they
+   * are retired (`PublicClothingItem.retired`).
+   *
+   * Always present, including as 0. The same scope warning as
+   * `excludedInLaundry` applies verbatim: this is every retired item in the
+   * wardrobe, NOT the number of suggestions that were withheld — the two can
+   * diverge for the identical reason (an excluded item might never have paired
+   * with anything anyway). Kept as its OWN count rather than merged into
+   * `excludedInLaundry`, because a wardrobe can have items excluded for both
+   * reasons and a merged number could not be un-added into "how many were in
+   * the wash" versus "how many were retired" — two different, unrelated
+   * actions a user might take in response.
+   */
+  excludedRetired: number;
+  /**
    * Parameters this API accepted and did not act on. Present only when the
    * caller actually sent one, so the documented `{ suggestions,
    * excludedInLaundry }` shape is unchanged for everyone else.

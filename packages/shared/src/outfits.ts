@@ -60,9 +60,10 @@ export interface PublicOutfit {
    * cover would be a dead link within the hour and dead permanently after.
    *
    * Absent when the first item cannot be resolved. That is not an error state:
-   * there is no cascade delete in this system, so it is only reachable by a
-   * direct database deletion, and a gallery must degrade to a placeholder
-   * rather than fail.
+   * `DELETE /items/:id` deletes an item without touching the outfits that
+   * reference it (there is no cascade delete in this system), so an ordinary
+   * deletion reaches this, and a gallery must degrade to a placeholder rather
+   * than fail.
    */
   coverUrl?: string;
   createdAt: string;
@@ -86,9 +87,10 @@ export interface PublicOutfitDetail extends Omit<PublicOutfit, 'coverUrl'> {
    * The resolved items, ordered to match `itemIds`.
    *
    * May be SHORTER than `itemIds` if an item no longer resolves. There is no
-   * cascade delete in this system (no `DELETE /items` exists), so this cannot
-   * happen through the API today — the tolerance exists so that a direct
-   * database deletion degrades the screen instead of 500ing it.
+   * cascade delete in this system: `DELETE /items/:id` removes the garment and
+   * leaves its id in place on every outfit that referenced it, so this is an
+   * ordinary state rather than a corrupted one, and the tolerance is what
+   * degrades the screen instead of 500ing it.
    */
   items: PublicClothingItem[];
 }

@@ -8,7 +8,9 @@ import { useAuth } from '../../src/auth/AuthContext';
 import { formatDay } from '../../src/format/text';
 import { markTrackingDirty } from '../../src/tracking/trackingDirty';
 import { useLaundryStatus } from '../../src/tracking/useLaundryStatus';
-import { fetchItem } from '../../src/wardrobe/api';
+import { useRetireItem } from '../../src/wardrobe/useRetireItem';
+import { markOutfitsDirty } from '../../src/outfits/outfitsDirty';
+import { deleteItem, fetchItem } from '../../src/wardrobe/api';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { categoryLabel } from '../../src/format/text';
 import { color, radius, space } from '../../src/theme/tokens';
@@ -205,6 +207,31 @@ export default function ItemDetailScreen() {
    */
   const togglingRef = useRef(false);
 
+  /**
+   * The Active/Retired toggle, and its own in-flight guard.
+   *
+   * A SECOND ref rather than sharing `togglingRef` with the laundry toggle:
+   * they are two independent writes on two different endpoints, and one must
+   * not swallow the other. The reasoning for each being a ref rather than the
+   * hook's `pending` state is identical — see `togglingRef` above.
+   */
+  const { setRetired, pending: retirePending, error: retireError } = useRetireItem();
+  const retiringRef = useRef(false);
+
+  /**
+   * Delete, and its own guard again.
+   *
+   * `deletingRef` is not interchangeable with `deleting` for the same
+   * same-frame reason, and here the cost of losing that race is the highest on
+   * this screen: the second request answers 404 (the route is deliberately not
+   * idempotent-silent), so a double tap would show the user an error for a
+   * deletion that in fact succeeded.
+   */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deletingRef = useRef(false);
+
   const current = state.status === 'ready' ? state.item : null;
 
   const onToggleLaundry = useCallback(async () => {
@@ -240,6 +267,31 @@ export default function ItemDetailScreen() {
     }
   }, [current, setStatus]);
 
+  const onToggleRetired = useCallback(async () => {
+    if (retiringRef.current) return;
+    if (current === null) return;
+    retiringRef.current = true;
+
+    try {
+      // The OPPOSITE of what is on screen, never a hard-coded `true`: this is
+      // the only control in the app that can bring a garment back into the
+      // active wardrobe, so a one-way door here would make `retired: false`
+      // unreachable.
+      const updated = await setRetired(current.id, !current.retired);
+      // `null` is the hook's failure signal — `retireError` already carries a
+      // message. The item is deliberately NOT touched, for the same reason the
+      // laundry toggle leaves it alone on failure.
+      if (updated === null) return;
+
+      setState({ status: 'ready', item: updated });
+      // The wardrobe grid is holding an item whose badge has just changed, and
+      // the outfit composer's selectable set just gained or lost a garment.
+      markTrackingDirty();
+    } finally {
+      retiringRef.current = false;
+    }
+  }, [current, setRetired]);
+
   const goBack = useCallback(() => {
     // The root Stack runs with `headerShown: false`, so this button is the
     // screen's only back affordance. Opened by a deep link this is the first
@@ -248,6 +300,48 @@ export default function ItemDetailScreen() {
     if (router.canGoBack()) router.back();
     else router.replace('/');
   }, [router]);
+
+  const onConfirmDelete = useCallback(async () => {
+    if (deletingRef.current) return;
+    if (current === null) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await deleteItem(current.id, token);
+      // Before navigating, so the grid this pops back to reloads rather than
+      // showing the deleted tile for the length of a round trip.
+      //
+      // The OUTFIT gallery is marked too, unlike an outfit delete which
+      // deliberately leaves the wardrobe alone. The asymmetry is real: an
+      // outfit that referenced this item now resolves one fewer garment, so
+      // its cover and its item count on the gallery have genuinely changed.
+      markTrackingDirty();
+      markOutfitsDirty();
+      goBack();
+    } catch (err) {
+      // A 404 means "it is not there" — deleted from another device, or never
+      // the caller's, since a foreign resource answers 404 rather than 403.
+      // Either way the outcome is the one the user asked for; treating it as a
+      // failure would strand them on an item that can never be deleted,
+      // because every retry answers 404 too. Same rule as `onConfirmDelete` in
+      // `app/outfits/[id].tsx`.
+      if (err instanceof ApiClientError && err.status === 404) {
+        markTrackingDirty();
+        markOutfitsDirty();
+        goBack();
+        return;
+      }
+      // The prompt stays armed: the confirm button is the retry.
+      setDeleteError(
+        err instanceof ApiClientError ? err.message : 'Something went wrong deleting this item.',
+      );
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  }, [current, goBack, token]);
 
   return (
     <SafeAreaView style={screenStyles.root} edges={['top']}>
@@ -324,6 +418,23 @@ export default function ItemDetailScreen() {
           onToggleLaundry={onToggleLaundry}
           laundryPending={laundryPending}
           laundryError={laundryError}
+          onToggleRetired={onToggleRetired}
+          retirePending={retirePending}
+          retireError={retireError}
+          confirmingDelete={confirmingDelete}
+          onStartDelete={() => {
+            setConfirmingDelete(true);
+            setDeleteError(null);
+          }}
+          onCancelDelete={() => {
+            // Disarmed, not merely hidden: a prompt left armed after a cancel
+            // is one an accidental tap can still fire.
+            setConfirmingDelete(false);
+            setDeleteError(null);
+          }}
+          onConfirmDelete={onConfirmDelete}
+          deleting={deleting}
+          deleteError={deleteError}
         />
       ) : null}
     </SafeAreaView>
@@ -335,11 +446,29 @@ function ItemDetail({
   onToggleLaundry,
   laundryPending,
   laundryError,
+  onToggleRetired,
+  retirePending,
+  retireError,
+  confirmingDelete,
+  onStartDelete,
+  onCancelDelete,
+  onConfirmDelete,
+  deleting,
+  deleteError,
 }: {
   item: PublicClothingItem;
   onToggleLaundry: () => void;
   laundryPending: boolean;
   laundryError: string | null;
+  onToggleRetired: () => void;
+  retirePending: boolean;
+  retireError: string | null;
+  confirmingDelete: boolean;
+  onStartDelete: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
+  deleting: boolean;
+  deleteError: string | null;
 }) {
   // `thumbnailUrl` exists and is deliberately not used: this is the detail
   // screen, and the thumbnail is a 240px grid asset that would be visibly soft
@@ -496,7 +625,101 @@ function ItemDetail({
         </Text>
       ) : null}
 
+      {/* The Active/Retired row and its toggle.
+          "Active"/"Retired" rather than "Available"/"Unavailable" on purpose:
+          the laundry button directly above can already read "Mark as
+          available", and two controls on one screen sharing that label would
+          be two different facts wearing the same words. */}
+      <DetailRow
+        testID="item-detail-retired"
+        label="Status"
+        value={item.retired ? 'Retired' : 'Active'}
+      />
+
+      {/* Same "label says what the press DOES" rule as the laundry toggle —
+          the row above already says what the item IS. */}
+      <Pressable
+        testID="item-retire-toggle"
+        onPress={onToggleRetired}
+        disabled={retirePending}
+        accessibilityRole="button"
+        accessibilityLabel={item.retired ? 'Return to wardrobe' : 'Retire this item'}
+        style={[styles.laundryButton, retirePending && styles.laundryButtonDisabled]}
+      >
+        {retirePending ? (
+          <ActivityIndicator color={color.soft} />
+        ) : (
+          <Text style={styles.laundryButtonText}>
+            {item.retired ? 'Return to wardrobe' : 'Retire this item'}
+          </Text>
+        )}
+      </Pressable>
+
+      {retireError !== null ? (
+        <Text testID="item-retire-error" style={styles.inlineError}>
+          {retireError}
+        </Text>
+      ) : null}
+
       <DetailRow testID="item-detail-created" label="Added" value={formatDay(item.createdAt)} />
+
+      {/* The confirmation is INLINE, and that is a requirement rather than a
+          style choice — the same reasoning `app/outfits/[id].tsx` records for
+          its own delete: `Alert.alert` opens a blocking native modal that no
+          test can see or dismiss, and it would stall the device gate behind a
+          dialog nothing can press. Two rendered buttons are also the only
+          version a screen reader can walk. */}
+      <View style={styles.deleteBlock}>
+        {confirmingDelete ? (
+          <View testID="item-delete-prompt" style={styles.deletePrompt}>
+            <Text style={styles.deletePromptText}>
+              Delete this item for good? Outfits that use it will show one fewer garment.
+            </Text>
+            <View style={styles.deleteRow}>
+              <Pressable
+                testID="item-delete-cancel"
+                onPress={onCancelDelete}
+                disabled={deleting}
+                accessibilityRole="button"
+                accessibilityLabel="Keep this item"
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                testID="item-delete-confirm"
+                onPress={onConfirmDelete}
+                disabled={deleting}
+                accessibilityRole="button"
+                accessibilityLabel="Delete this item for good"
+                style={[styles.dangerButton, deleting && styles.dangerButtonDisabled]}
+              >
+                {deleting ? (
+                  <ActivityIndicator color={color.soft} />
+                ) : (
+                  <Text style={styles.dangerButtonText}>Delete</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            testID="item-delete"
+            onPress={onStartDelete}
+            accessibilityRole="button"
+            accessibilityLabel="Delete this item"
+            style={styles.dangerOutlineButton}
+          >
+            <Text style={styles.dangerOutlineText}>Delete this item</Text>
+          </Pressable>
+        )}
+
+        {deleteError !== null ? (
+          <Text testID="item-delete-error" style={styles.inlineError}>
+            {deleteError}
+          </Text>
+        ) : null}
+      </View>
     </ScrollView>
   );
 }
@@ -611,5 +834,53 @@ const styles = StyleSheet.create({
   laundryButtonTextDisabled: { color: color.soft },
   laundryButtonText: { ...text.button, color: color.onInk },
   inlineError: { ...text.body, fontSize: 13.5, color: color.washInk, paddingTop: space.sm },
+
+  // The delete block, mirroring `app/outfits/[id].tsx` style for style: the
+  // two are the same interaction on two resources, and a delete that looked
+  // different depending on what was being deleted would read as a different
+  // kind of action.
+  deleteBlock: { paddingTop: 28, gap: space.sm },
+  dangerOutlineButton: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: color.washInk,
+    borderRadius: radius.pill,
+    paddingVertical: 14,
+    paddingHorizontal: space.xl,
+    alignItems: 'center',
+  },
+  dangerOutlineText: { ...text.button, color: color.washInk },
+  deletePrompt: {
+    borderRadius: radius.lg,
+    padding: space.lg,
+    backgroundColor: color.wash,
+    gap: 10,
+  },
+  deletePromptText: { ...text.body, fontSize: 13.5, color: color.washInk },
+  deleteRow: { flexDirection: 'row', gap: 10 },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: radius.pill,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    backgroundColor: color.cloud,
+    alignItems: 'center',
+  },
+  secondaryButtonText: { fontFamily: font.semibold, fontSize: 15, color: color.ink },
+  dangerButton: {
+    flex: 1,
+    borderRadius: radius.pill,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    backgroundColor: color.washInk,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  // Same reasoning as the filled buttons above: an opacity-dimmed red is still
+  // a solid coloured button. `cloud` is unmistakably inactive.
+  dangerButtonDisabled: { backgroundColor: color.cloud },
+  dangerButtonText: { fontFamily: font.semibold, fontSize: 15, color: color.wash },
+
   pressed: { opacity: 0.72 },
 });

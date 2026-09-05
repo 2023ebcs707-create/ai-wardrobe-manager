@@ -117,6 +117,16 @@ export interface SuggestionsSnapshot {
    * are observably different.
    */
   laundryNotice: string | null;
+  /**
+   * A ready-to-render sentence about retired items, or `null` when none are
+   * retired.
+   *
+   * Read `retiredNoticeFor` before touching this. Kept as a SEPARATE sentence
+   * from `laundryNotice` rather than merged into it — see that function's
+   * header for why a merged count could not be un-added back into "how many
+   * are in the wash" versus "how many are retired".
+   */
+  retiredNotice: string | null;
 }
 
 export interface UseSuggestionsResult {
@@ -210,6 +220,26 @@ export function laundryNoticeFor(excludedInLaundry: number): string | null {
   if (typeof excludedInLaundry !== 'number' || !Number.isFinite(excludedInLaundry)) return null;
   if (excludedInLaundry <= 0) return null;
   return `${countLabel(excludedInLaundry)} ${excludedInLaundry === 1 ? 'is' : 'are'} in the laundry`;
+}
+
+/**
+ * `excludedRetired` → the one sentence this app is allowed to build from it.
+ *
+ * Same discipline as `laundryNoticeFor`, restated for a different count
+ * rather than folded into that function: the wording states a fact about the
+ * wardrobe ("N items are retired"), never a causation about the shortlist
+ * ("N suggestions were hidden"), for the identical reason — a wardrobe of one
+ * shirt plus three retired accessories answers `suggestions: []` with
+ * `excludedRetired: 3`, and none of those three could have produced a
+ * suggestion regardless of being retired.
+ *
+ * `null` at zero, so a caller renders nothing rather than "0 items are
+ * retired".
+ */
+export function retiredNoticeFor(excludedRetired: number): string | null {
+  if (typeof excludedRetired !== 'number' || !Number.isFinite(excludedRetired)) return null;
+  if (excludedRetired <= 0) return null;
+  return `${countLabel(excludedRetired)} ${excludedRetired === 1 ? 'is' : 'are'} retired`;
 }
 
 /**
@@ -314,6 +344,7 @@ export function useSuggestions(): UseSuggestionsResult {
         setSnapshot({
           suggestions: body.suggestions.map(toDisplaySuggestion),
           laundryNotice: laundryNoticeFor(body.excludedInLaundry),
+          retiredNotice: retiredNoticeFor(body.excludedRetired),
         });
         setActivity('idle');
       } catch (err) {

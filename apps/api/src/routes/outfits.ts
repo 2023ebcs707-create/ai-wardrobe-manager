@@ -140,6 +140,20 @@ async function resolveOwnedItems(
         { path, message: 'One or more items could not be found' },
       ]);
     }
+    // A DIFFERENT rejection from "Unknown item", deliberately: this item is
+    // both owned and found, just excluded. Collapsing it into "Unknown item"
+    // would tell the composer the same lie for two different reasons — one
+    // where retrying with a different id helps, and one where it never will.
+    //
+    // Only reachable when `itemIds` is actually being (re)supplied — a
+    // name-only `PATCH /outfits/:id` never calls this function at all, so an
+    // outfit that already held an item at the moment it was retired is left
+    // alone until its composition is next touched.
+    if (doc.retired) {
+      throw new ApiError(400, 'VALIDATION_FAILED', 'Item is retired', [
+        { path, message: 'A retired item cannot be added to an outfit' },
+      ]);
+    }
     return doc;
   });
 }
@@ -210,9 +224,10 @@ export function createOutfitsRouter(config: Config, storage: StorageProvider): R
    * image when it has none.
    *
    * Returns undefined rather than throwing when the item cannot be resolved.
-   * There is no cascade delete in this system, so that is only reachable by a
-   * direct database deletion — but a gallery that 500s on one stale reference
-   * is worse than one that shows a placeholder.
+   * There is no cascade delete in this system — `DELETE /items/:id` leaves the
+   * deleted id in place on every outfit that referenced it — so an ordinary
+   * deletion reaches this, and a gallery that 500s on one stale reference is
+   * worse than one that shows a placeholder.
    */
   function signCover(item: ClothingItemDoc | null): Promise<string | undefined> {
     const key = item?.thumbnailKey ?? item?.imageKey;
@@ -254,9 +269,10 @@ export function createOutfitsRouter(config: Config, storage: StorageProvider): R
    * Deliberately tolerant where `resolveOwnedItems` is strict: an id that no
    * longer resolves is skipped rather than fatal, so `items` may be shorter
    * than `itemIds`. Both are returned, which is what lets a client see the
-   * gap. There is no cascade delete in this system, so this is only reachable
-   * by a direct database deletion — but a detail screen that 500s on one stale
-   * reference is worse than one that renders the rest.
+   * gap. There is no cascade delete in this system — `DELETE /items/:id`
+   * leaves the deleted id on the outfit — so this is an ordinary state, and a
+   * detail screen that 500s on one stale reference is worse than one that
+   * renders the rest.
    *
    * `userId` is in the query for the same reason it is in `resolveOwnedItems`:
    * this is the path that hands back signed URLs, and it must not depend on a

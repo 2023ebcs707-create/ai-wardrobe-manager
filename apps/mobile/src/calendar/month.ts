@@ -15,7 +15,7 @@
  * `TZ=America/Los_Angeles` precisely so a UTC implementation and a local one
  * are told apart rather than coinciding.
  */
-import type { PublicWearEvent } from '@wardrobe/shared';
+import type { PublicOutfitPlan, PublicWearEvent } from '@wardrobe/shared';
 
 /** `YYYY-MM-DD` in the device's own zone. The key everything here is keyed by. */
 export function localDayKey(date: Date): string {
@@ -116,6 +116,50 @@ export function indexWearsByDay(events: readonly PublicWearEvent[]): Record<stri
           Date.parse(event.wornAt) > Date.parse(existing.latest.wornAt)
             ? event
             : existing.latest,
+        count: existing.count + 1,
+      };
+    }
+  }
+  return byDay;
+}
+
+/**
+ * The plan for each local day — the forward-looking twin of
+ * `indexWearsByDay`.
+ *
+ * EARLIEST-CREATED wins where a day has several, which is the opposite of the
+ * wear index's newest-wins and deliberate: a wear cell answers "what did you
+ * end up in", so the last one is the honest answer, while a plan cell answers
+ * "what did you decide to wear", and the first decision is the one the user
+ * has been looking at since they made it. Replanning is done by cancelling,
+ * not by planning over the top.
+ *
+ * Keyed by the LOCAL day of `plannedFor`, for the same reason everything else
+ * in this module is local: the day the user picked is a day on their own
+ * calendar.
+ */
+export interface DayPlans {
+  /** The one to show. */
+  first: PublicOutfitPlan;
+  /** How many plans that day has in total, including `first`. */
+  count: number;
+}
+
+export function indexPlansByDay(plans: readonly PublicOutfitPlan[]): Record<string, DayPlans> {
+  const byDay: Record<string, DayPlans> = {};
+  for (const plan of plans) {
+    const key = dayKeyOf(plan.plannedFor);
+    const existing = byDay[key];
+    if (existing === undefined) {
+      byDay[key] = { first: plan, count: 1 };
+    } else {
+      byDay[key] = {
+        // Compared rather than leaning on the endpoint's ascending sort, the
+        // same way `indexWearsByDay` does not lean on its endpoint's.
+        first:
+          Date.parse(plan.createdAt) < Date.parse(existing.first.createdAt)
+            ? plan
+            : existing.first,
         count: existing.count + 1,
       };
     }

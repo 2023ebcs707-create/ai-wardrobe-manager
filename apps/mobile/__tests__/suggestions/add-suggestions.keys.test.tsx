@@ -66,6 +66,7 @@ function item(id: string, category: ItemCategory = 'tshirt'): PublicClothingItem
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',
@@ -79,7 +80,7 @@ function suggestion(ids: string[]): DisplaySuggestion {
 
 function showing(overrides: Partial<UseSuggestionsResult> = {}): void {
   mockedUseSuggestions.mockReturnValue({
-    snapshot: { suggestions: [], laundryNotice: null },
+    snapshot: { suggestions: [], laundryNotice: null, retiredNotice: null },
     unavailable: false,
     activity: 'idle',
     error: null,
@@ -142,7 +143,7 @@ describe('suggestion list row identity', () => {
     // what it returns. It is NOT a paging test, and a paging test could not
     // stand in for it — this endpoint has no cursor at all, so there is nothing
     // to page. The other half is the replacement below.
-    showing({ snapshot: { suggestions: [suggestion(['top', 'bottom'])], laundryNotice: null } });
+    showing({ snapshot: { suggestions: [suggestion(['top', 'bottom'])], laundryNotice: null, retiredNotice: null } });
     await openSuggestions();
 
     expect(flatListProps(screen.getByTestId('suggestions-list')).keyExtractor).toBe(
@@ -162,17 +163,17 @@ describe('suggestion list row identity', () => {
     // a reused row would post the ids of the outfit the row is no longer
     // showing.
     const before = [suggestion(['top', 'bottom']), suggestion(['coat', 'skirt'])];
-    showing({ snapshot: { suggestions: before, laundryNotice: null } });
+    showing({ snapshot: { suggestions: before, laundryNotice: null, retiredNotice: null } });
     const view = await openSuggestions();
     expect(screen.getByTestId('probe-top-bottom')).toHaveTextContent('top-bottom');
 
-    showing({ snapshot: { suggestions: before, laundryNotice: null }, activity: 'refreshing' });
+    showing({ snapshot: { suggestions: before, laundryNotice: null, retiredNotice: null }, activity: 'refreshing' });
     await act(async () => {
       view.rerender(<AddScreen />);
     });
 
     const after = [suggestion(['dress', 'heels']), suggestion(['jumper', 'jeans'])];
-    showing({ snapshot: { suggestions: after, laundryNotice: null } });
+    showing({ snapshot: { suggestions: after, laundryNotice: null, retiredNotice: null } });
     await act(async () => {
       view.rerender(<AddScreen />);
     });

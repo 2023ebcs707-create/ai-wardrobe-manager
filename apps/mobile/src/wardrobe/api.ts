@@ -59,3 +59,36 @@ export async function fetchItem(id: string, token: string | null): Promise<Publi
   });
   return res.item;
 }
+
+export interface SetRetiredOptions {
+  token: string | null;
+  retired: boolean;
+}
+
+/** `PATCH /items/:id/retire`. Take an item out of, or back into, the active wardrobe. */
+export async function setRetired(id: string, opts: SetRetiredOptions): Promise<PublicClothingItem> {
+  const res = await apiRequest<{ item: PublicClothingItem }>(
+    `/items/${encodeURIComponent(id)}/retire`,
+    { method: 'PATCH', token: opts.token, body: { retired: opts.retired } },
+  );
+  return res.item;
+}
+
+/**
+ * Delete an item outright. Resolves on success and throws `ApiClientError`
+ * otherwise.
+ *
+ * `DELETE /items/:id` answers **204 with no body at all**, exactly like
+ * `deleteOutfit` in `../outfits/api` — see that function's comment for why
+ * `apiRequest` reading the body as text (and only parsing when non-empty) is
+ * what makes this safe.
+ *
+ * Not idempotent-silent: deleting an id that does not exist (or belongs to
+ * someone else) is a 404, so a caller must not retry blindly on failure.
+ */
+export async function deleteItem(id: string, token: string | null): Promise<void> {
+  await apiRequest<Record<string, never>>(`/items/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    token,
+  });
+}

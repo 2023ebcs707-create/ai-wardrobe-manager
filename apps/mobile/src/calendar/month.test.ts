@@ -1,9 +1,10 @@
-import type { PublicWearEvent } from '@wardrobe/shared';
+import type { PublicOutfitPlan, PublicWearEvent } from '@wardrobe/shared';
 import {
   dateFromDayKey,
   weekOf,
   weekRangeLabel,
   dayKeyOf,
+  indexPlansByDay,
   indexWearsByDay,
   localDayKey,
   monthCells,
@@ -92,6 +93,68 @@ describe('indexWearsByDay', () => {
     const newer = wear({ wornAt: '2026-08-28T20:00:00.000Z', id: 'newer' });
     expect(indexWearsByDay([newer, older])['2026-08-28'].latest.id).toBe('newer');
     expect(indexWearsByDay([older, newer])['2026-08-28'].latest.id).toBe('newer');
+  });
+});
+
+function plan(
+  overrides: Partial<PublicOutfitPlan> & { plannedFor: string; createdAt: string },
+): PublicOutfitPlan {
+  return {
+    id: overrides.createdAt,
+    userId: 'u1',
+    outfitId: 'o1',
+    itemIds: [],
+    ...overrides,
+  };
+}
+
+describe('indexPlansByDay', () => {
+  it('keys a plan by its LOCAL day, not its UTC one', () => {
+    // 02:00 UTC on the 29th is 19:00 on the 28th in the pinned zone. A UTC
+    // implementation would file this a day late.
+    const byDay = indexPlansByDay([
+      plan({ plannedFor: '2026-08-29T02:00:00.000Z', createdAt: '2026-08-01T00:00:00.000Z' }),
+    ]);
+    expect(Object.keys(byDay)).toEqual(['2026-08-28']);
+  });
+
+  it('keeps the EARLIEST-created plan of a day and counts the rest', () => {
+    // Deliberately the opposite of `indexWearsByDay`'s newest-wins: a wear
+    // cell answers "what did you end up in", a plan cell "what did you
+    // decide", and the first decision is the one the user has been seeing.
+    const first = plan({
+      plannedFor: '2026-08-28T19:00:00.000Z',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      id: 'first',
+    });
+    const second = plan({
+      plannedFor: '2026-08-28T19:00:00.000Z',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      id: 'second',
+    });
+
+    const byDay = indexPlansByDay([first, second]);
+    expect(byDay['2026-08-28'].first.id).toBe('first');
+    expect(byDay['2026-08-28'].count).toBe(2);
+  });
+
+  it('does not depend on the input being sorted', () => {
+    const early = plan({
+      plannedFor: '2026-08-28T19:00:00.000Z',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      id: 'early',
+    });
+    const late = plan({
+      plannedFor: '2026-08-28T19:00:00.000Z',
+      createdAt: '2026-08-05T00:00:00.000Z',
+      id: 'late',
+    });
+    expect(indexPlansByDay([late, early])['2026-08-28'].first.id).toBe('early');
+    expect(indexPlansByDay([early, late])['2026-08-28'].first.id).toBe('early');
+  });
+
+  it('is empty for no plans', () => {
+    expect(indexPlansByDay([])).toEqual({});
   });
 });
 

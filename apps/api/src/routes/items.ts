@@ -88,6 +88,15 @@ const laundrySchema = z.object({
   status: z.enum(LAUNDRY_STATUSES),
 });
 
+/**
+ * `PATCH /items/:id/retire`. One settable key, same discipline as
+ * `laundrySchema` above: anything else a client sends is stripped rather than
+ * accepted.
+ */
+const retireSchema = z.object({
+  retired: z.boolean(),
+});
+
 // A multipart part's `mimetype` is a client-declared header — an attacker can
 // upload arbitrary bytes and simply lie about the Content-Type. Stage 3 feeds
 // every stored object to a CLIP model trusting it is an image, and signed
@@ -526,9 +535,10 @@ export function createItemsRouter(config: Config, storage: StorageProvider): Rou
     //      field this route touched is fine. Measured: 500, one orphan row,
     //      item still `available`.
     //   2. `save()` throws DocumentNotFoundError when the document was deleted
-    //      between the ownership read and this write. Not reachable today, but
-    //      `DELETE /items/:id` is in the spec's FR4 surface, so that window
-    //      opens the moment it ships.
+    //      between the ownership read and this write. `DELETE /items/:id` now
+    //      exists (below), so that window is open: one user on two devices, or
+    //      one device with the detail screen's delete and laundry toggle both
+    //      reachable, is enough to hit it.
     //
     // Left uncompensated, three taps on such an item accumulate three
     // transition rows while the grid still shows it available and
@@ -566,6 +576,35 @@ export function createItemsRouter(config: Config, storage: StorageProvider): Rou
     res.json({ item });
   });
 
+  /**
+   * Take an item out of, or put it back into, the active wardrobe.
+   *
+   * Unlike `/laundry` this writes no transition log: nothing here asks "when
+   * did this item become retired", only "is it retired now", so a plain field
+   * flip is enough. See `PublicClothingItem.retired` in `@wardrobe/shared` for
+   * why this is a field distinct from `laundryStatus` rather than a third
+   * laundry state.
+   *
+   * Registered before `PATCH /:id` for the same reason `/laundry` is — Express
+   * 5's `:id` matches one path segment, so this is a habit rather than a
+   * necessity today, but the ordering stays correct if that ever changes.
+   */
+  router.patch('/:id/retire', requireAuth(config), async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      throw new ApiError(401, 'UNAUTHORIZED', 'Authentication required');
+    }
+
+    const patch = parseBody(retireSchema, req.body);
+    const doc = await findOwnedItem(req.params.id, userId);
+
+    doc.retired = patch.retired;
+    await doc.save();
+
+    const item: PublicClothingItem = await signItemUrls(storage, doc);
+    res.json({ item });
+  });
+
   router.patch('/:id', requireAuth(config), async (req, res) => {
     const userId = req.userId;
     if (!userId) {
@@ -590,6 +629,50 @@ export function createItemsRouter(config: Config, storage: StorageProvider): Rou
 
     const item: PublicClothingItem = await signItemUrls(storage, doc);
     res.json({ item });
+  });
+
+  /**
+   * Delete an item outright.
+   *
+   * NO CASCADE. An outfit or a wear-history row that references this id keeps
+   * doing so — `resolveOwnedItems` in `apps/api/src/routes/outfits.ts` and the
+   * detail/list reads it feeds already tolerate an id that does not resolve,
+   * because that tolerance was built for exactly this: a stale reference left
+   * behind by a deletion, degrading a screen instead of 500ing it.
+   *
+   * THE DATABASE ROW IS DELETED FIRST, storage cleanup second and best-effort.
+   * The two failure orders are not symmetric: a storage object that outlives
+   * its row is an invisible leak nobody's wardrobe ever sees again, while a row
+   * that outlives its storage object is a grid tile with a dead image link.
+   * The cheaper failure is chosen deliberately, the same way `POST /` chooses
+   * to leave an orphaned upload behind rather than risk a half-written item.
+   *
+   * Ownership is part of the delete filter, exactly as `DELETE /outfits/:id`
+   * does it: a foreign item is never deleted and never distinguished from one
+   * that does not exist.
+   */
+  router.delete('/:id', requireAuth(config), async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      throw new ApiError(401, 'UNAUTHORIZED', 'Authentication required');
+    }
+
+    // Loaded (not just matched by a delete filter) so the image keys are still
+    // in hand for the storage cleanup below.
+    const doc = await findOwnedItem(req.params.id, userId);
+
+    await ClothingItem.deleteOne({ _id: doc._id, userId });
+
+    const keys = [doc.imageKey, ...(doc.thumbnailKey ? [doc.thumbnailKey] : [])];
+    await Promise.all(
+      keys.map((key) =>
+        storage.delete(key).catch((err) => {
+          console.error(`Failed to delete storage object for a removed item: ${key}`, err);
+        }),
+      ),
+    );
+
+    res.status(204).end();
   });
 
   return router;

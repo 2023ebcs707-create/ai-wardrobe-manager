@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import type { PublicClothingItem } from '@wardrobe/shared';
 import { color, occasionColor, radius, space } from '../theme/tokens';
 import { font } from '../theme/type';
-import { WEEKDAY_INITIALS, type DayWears } from './month';
+import { WEEKDAY_INITIALS, type DayPlans, type DayWears } from './month';
 
 export interface MonthGridProps {
   year: number;
@@ -22,6 +22,13 @@ export interface MonthGridProps {
   cells: (number | null)[];
   /** Keyed by `YYYY-MM-DD`, from `indexWearsByDay`. */
   wearsByDay: Record<string, DayWears>;
+  /**
+   * Keyed by `YYYY-MM-DD`, from `indexPlansByDay`.
+   *
+   * Optional so a host that does not read plans is unaffected — the same
+   * reason `ItemTile.selected` is optional. Defaults to nothing planned.
+   */
+  plansByDay?: Record<string, DayPlans>;
   itemsById: Record<string, PublicClothingItem>;
   /** `YYYY-MM-DD`, or null when the visible month contains no today. */
   todayKey: string | null;
@@ -36,6 +43,7 @@ export function MonthGrid({
   month,
   cells,
   wearsByDay,
+  plansByDay = {},
   itemsById,
   todayKey,
   selectedKey,
@@ -73,6 +81,7 @@ export function MonthGrid({
                 day={day}
                 dayKey={dayKey}
                 wears={wearsByDay[dayKey]}
+                plans={plansByDay[dayKey]}
                 itemsById={itemsById}
                 isToday={dayKey === todayKey}
                 isSelected={dayKey === selectedKey}
@@ -101,6 +110,7 @@ interface DayCellProps {
   day: number;
   dayKey: string;
   wears: DayWears | undefined;
+  plans: DayPlans | undefined;
   itemsById: Record<string, PublicClothingItem>;
   isToday: boolean;
   isSelected: boolean;
@@ -112,6 +122,7 @@ const DayCell = memo(function DayCell({
   day,
   dayKey,
   wears,
+  plans,
   itemsById,
   isToday,
   isSelected,
@@ -119,7 +130,23 @@ const DayCell = memo(function DayCell({
   onPress,
 }: DayCellProps) {
   const worn = wears !== undefined;
-  const photo = worn ? photoFor(wears.latest.itemIds, itemsById) : undefined;
+  /**
+   * A day shows its PLAN only while nothing has been worn on it.
+   *
+   * A worn day is a settled fact and a planned one is an intention, so once
+   * the day has happened the photograph of what was actually worn is the
+   * honest cell — showing a plan over it would keep asserting an intention the
+   * day has already answered. This is also what keeps the two markers from
+   * ever competing for the same corner.
+   */
+  const planned = !worn && plans !== undefined;
+  // A planned day is drawn from the outfit it plans, using the same
+  // snapshotted-ids fallback a worn day uses.
+  const photo = worn
+    ? photoFor(wears.latest.itemIds, itemsById)
+    : planned
+      ? photoFor(plans.first.itemIds, itemsById)
+      : undefined;
 
   return (
     // The ring lives on an outer view with a transparent border by default, so
@@ -131,7 +158,7 @@ const DayCell = memo(function DayCell({
         onPress={() => onPress(dayKey)}
         accessibilityRole="button"
         accessibilityState={{ selected: isSelected }}
-        accessibilityLabel={dayLabel(day, wears, isToday)}
+        accessibilityLabel={dayLabel(day, wears, planned ? plans : undefined, isToday)}
         style={({ pressed }) => [
           styles.cell,
           worn ? null : isAhead ? styles.cellAhead : styles.cellFree,
@@ -158,6 +185,17 @@ const DayCell = memo(function DayCell({
           <View
             testID={`calendar-occasion-${dayKey}`}
             style={[styles.occasion, { backgroundColor: occasionColor(wears.latest.occasion) }]}
+          />
+        ) : planned ? (
+          /* A HOLLOW ring where a worn day has a filled dot — a SHAPE
+             difference, not a colour one, so "planned" and "worn" stay
+             distinguishable in greyscale and to a colour-blind reader. The
+             same argument the `cellAhead` outline below is built on. The ring
+             still takes the occasion's hue, so a planned dinner and a planned
+             work day read as they do everywhere else in this app. */
+          <View
+            testID={`calendar-planned-${dayKey}`}
+            style={[styles.planned, { borderColor: occasionColor(plans.first.occasion) }]}
           />
         ) : null}
         <Text
@@ -199,14 +237,26 @@ function photoFor(
  * neither of which announces anything, so this is the entire accessible
  * content of the day.
  */
-function dayLabel(day: number, wears: DayWears | undefined, isToday: boolean): string {
+function dayLabel(
+  day: number,
+  wears: DayWears | undefined,
+  plans: DayPlans | undefined,
+  isToday: boolean,
+): string {
   const parts = [isToday ? `${day}, today` : `${day}`];
-  if (wears === undefined) {
-    parts.push('nothing logged');
-  } else {
+  if (wears !== undefined) {
     parts.push(wears.latest.outfitName ?? 'an outfit');
     if (wears.latest.occasion !== undefined) parts.push(`for ${wears.latest.occasion}`);
     if (wears.count > 1) parts.push(`and ${wears.count - 1} more`);
+  } else if (plans !== undefined) {
+    // The hollow ring is invisible to a screen reader, so without this the
+    // planned state simply does not exist for a TalkBack user. "Planned"
+    // leads, because that is the word that distinguishes this from a worn day.
+    parts.push(`planned: ${plans.first.outfitName ?? 'an outfit'}`);
+    if (plans.first.occasion !== undefined) parts.push(`for ${plans.first.occasion}`);
+    if (plans.count > 1) parts.push(`and ${plans.count - 1} more planned`);
+  } else {
+    parts.push('nothing logged');
   }
   return parts.join(', ');
 }
@@ -250,6 +300,19 @@ const styles = StyleSheet.create({
     borderRadius: 3.5,
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.85)',
+  },
+  // The planned marker: same size and position as the occasion dot, HOLLOW
+  // rather than filled. `backgroundColor` is deliberately absent — that
+  // absence is the whole distinction, and `borderColor` is supplied inline
+  // from the occasion hue.
+  planned: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    borderWidth: 2,
   },
 
   number: {

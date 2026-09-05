@@ -10,6 +10,7 @@ function item(id: string): PublicClothingItem {
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'ai',
     createdAt: '2026-08-01T10:00:00.000Z',

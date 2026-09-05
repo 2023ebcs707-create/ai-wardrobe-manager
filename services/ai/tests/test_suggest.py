@@ -834,6 +834,40 @@ def test_the_engine_does_not_filter_on_laundry_status_itself():
     assert response.json()["suggestions"][0]["itemIds"] == ["t1", "b1"]
 
 
+def test_the_engine_does_not_filter_on_retired_itself():
+    """The same boundary as the laundry test above, for the `retired` flag.
+
+    `retired` lives in Mongo beside `laundryStatus` and is not part of this
+    request shape either; the caller filters before calling and reports the
+    count as `excludedRetired`. Pinned for the same reason: "the other side
+    does it" is otherwise a claim nothing can falsify. What is actually true
+    is that an unknown field is ignored rather than rejected, so a retired
+    garment the caller forgot to filter out WILL be suggested.
+    """
+    response = client.post(
+        "/suggest",
+        json={
+            "items": [
+                {
+                    "id": "t1",
+                    "category": "shirt",
+                    "colours": [{"hex": "#ffffff", "name": "white"}],
+                    "retired": True,
+                },
+                {
+                    "id": "b1",
+                    "category": "trousers",
+                    "colours": [{"hex": "#000080", "name": "navy"}],
+                    "retired": True,
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"][0]["itemIds"] == ["t1", "b1"]
+
+
 def test_the_endpoint_is_synchronous_so_fastapi_threadpools_it():
     """The claim in suggest_outfits' docstring, pinned. FastAPI runs a
     non-coroutine endpoint body in a worker thread; an `async def` body doing

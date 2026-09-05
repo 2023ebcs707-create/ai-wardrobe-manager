@@ -44,6 +44,7 @@ function item(id: string, wearCount: number): PublicClothingItem {
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',

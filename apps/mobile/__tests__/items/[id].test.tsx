@@ -10,7 +10,8 @@ import type { LaundryStatus, PublicClothingItem } from '@wardrobe/shared';
 // `status`, so the instances rejected below have to be the genuine article.
 import { ApiClientError } from '../../src/api/client';
 import { useAuth } from '../../src/auth/AuthContext';
-import { fetchItem } from '../../src/wardrobe/api';
+import { deleteItem, fetchItem } from '../../src/wardrobe/api';
+import { useRetireItem } from '../../src/wardrobe/useRetireItem';
 // The REAL signal module, not a mock: it is a handful of lines of module state
 // with no dependencies, and `__tests__/tracking/trackingDirty.test.ts` pins its
 // contract separately. Asserting through `consumeTrackingDirty` tests that this
@@ -60,6 +61,8 @@ import { categoryLabel } from '../../src/format/text';
 jest.mock('../../src/wardrobe/api', () => ({
   fetchItems: jest.fn(),
   fetchItem: jest.fn(),
+  setRetired: jest.fn(),
+  deleteItem: jest.fn(),
 }));
 
 // Only `useAuth` is read by this screen, so the real module (and its
@@ -95,7 +98,18 @@ jest.mock('expo-router', () => ({
  */
 jest.mock('../../src/tracking/useLaundryStatus', () => ({ useLaundryStatus: jest.fn() }));
 
+/**
+ * The retire hook is mocked for the SAME reason the laundry one is, verbatim:
+ * `useRetireItem` collapses two same-frame calls itself and has its own suite
+ * proving it (`__tests__/wardrobe/useRetireItem.test.ts`), so running the real
+ * hook here would make this screen's own `retiringRef` unfalsifiable — swap it
+ * for a state flag and the shared guard still swallows the second call.
+ */
+jest.mock('../../src/wardrobe/useRetireItem', () => ({ useRetireItem: jest.fn() }));
+
 const mockedFetchItem = jest.mocked(fetchItem);
+const mockedDeleteItem = jest.mocked(deleteItem);
+const mockedUseRetireItem = jest.mocked(useRetireItem);
 const mockedUseLaundryStatus = jest.mocked(useLaundryStatus);
 const mockedUseAuth = jest.mocked(useAuth);
 const mockedUseLocalSearchParams = useLocalSearchParams as unknown as jest.Mock;
@@ -105,6 +119,8 @@ const TOKEN = 'tok-abc';
 
 /** The mocked hook's mutation. Its resolved value is set per test. */
 const setStatus = jest.fn();
+/** The retire hook's mutation, same arrangement. */
+const setRetiredMutation = jest.fn();
 
 const back = jest.fn();
 const replace = jest.fn();
@@ -161,6 +177,7 @@ function item(overrides: Partial<PublicClothingItem> = {}): PublicClothingItem {
     colors: [{ hex: '#001f3f', name: 'navy', share: 1 }],
     seasons: ['winter'],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'ai',
     aiConfidence: 0.82,
@@ -206,6 +223,11 @@ describe('ItemDetailScreen (FR4 — item details)', () => {
     // The idle shape of the mocked hook. Tests that want a failure or an
     // in-flight state override this.
     mockedUseLaundryStatus.mockReturnValue({ setStatus, pending: false, error: null });
+    mockedUseRetireItem.mockReturnValue({
+      setRetired: setRetiredMutation,
+      pending: false,
+      error: null,
+    });
   });
 
   afterEach(() => {
@@ -687,6 +709,11 @@ describe('ItemDetailScreen — the laundry toggle (FR7 / TC-09)', () => {
     canGoBack.mockReturnValue(true);
     mockedUseRouter.mockReturnValue({ back, replace, canGoBack });
     mockedUseLaundryStatus.mockReturnValue({ setStatus, pending: false, error: null });
+    mockedUseRetireItem.mockReturnValue({
+      setRetired: setRetiredMutation,
+      pending: false,
+      error: null,
+    });
   });
 
   afterEach(() => {
@@ -967,5 +994,325 @@ describe('ItemDetailScreen — the laundry toggle (FR7 / TC-09)', () => {
     await act(async () => {
       loading.resolve(item());
     });
+  });
+});
+
+/**
+ * The Active/Retired toggle.
+ *
+ * Retiring is distinct from the laundry state directly above it: laundry is
+ * temporary and leaves the item selectable in the composer, retiring takes it
+ * out of the active wardrobe entirely (`resolveOwnedItems` rejects it
+ * server-side, and `OutfitComposer` hides it). The two controls sit on one
+ * screen, which is exactly why the labels must not collide.
+ */
+describe('ItemDetailScreen — the Active/Retired toggle', () => {
+  beforeEach(() => {
+    mockedUseAuth.mockReturnValue({
+      status: 'authenticated',
+      user: null,
+      token: TOKEN,
+      signIn: jest.fn(),
+      signUp: jest.fn(),
+      signOut: jest.fn(),
+    });
+    mockedUseLocalSearchParams.mockReturnValue({ id: 'item-1' });
+    canGoBack.mockReturnValue(true);
+    mockedUseRouter.mockReturnValue({ back, replace, canGoBack });
+    mockedUseLaundryStatus.mockReturnValue({ setStatus, pending: false, error: null });
+    mockedUseRetireItem.mockReturnValue({
+      setRetired: setRetiredMutation,
+      pending: false,
+      error: null,
+    });
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+    TRACKING_READERS.forEach((reader) => consumeTrackingDirty(reader));
+  });
+
+  it('shows the status as Active for an item in the wardrobe', async () => {
+    await renderReady(item({ retired: false }));
+
+    expect(screen.getByTestId('item-detail-retired')).toHaveTextContent('Active');
+  });
+
+  it('shows the status as Retired for one that is out of it', async () => {
+    await renderReady(item({ retired: true }));
+
+    expect(screen.getByTestId('item-detail-retired')).toHaveTextContent('Retired');
+  });
+
+  it('never labels the retire toggle the same as the laundry one', async () => {
+    // The reason this concept is called Active/Retired rather than
+    // available/unavailable: both controls are on screen at once, and the
+    // laundry button already says "Mark as available".
+    await renderReady(item({ retired: false, laundryStatus: 'in_laundry' }));
+
+    const laundry = screen.getByTestId('item-laundry-toggle').props.accessibilityLabel as string;
+    const retire = screen.getByTestId('item-retire-toggle').props.accessibilityLabel as string;
+    expect(laundry).toMatch(/mark as available/i);
+    expect(retire).not.toBe(laundry);
+    expect(retire).not.toMatch(/mark as available/i);
+  });
+
+  it('retires an active item', async () => {
+    setRetiredMutation.mockResolvedValueOnce(item({ retired: true }));
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(setRetiredMutation).toHaveBeenCalledWith('item-1', true);
+  });
+
+  it('sends the OPPOSITE of the current state, so retiring is not a one-way door', async () => {
+    setRetiredMutation.mockResolvedValueOnce(item({ retired: false }));
+    await renderReady(item({ retired: true }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(setRetiredMutation).toHaveBeenCalledWith('item-1', false);
+  });
+
+  it('re-renders from the item the server answered with', async () => {
+    setRetiredMutation.mockResolvedValueOnce(item({ retired: true }));
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('item-detail-retired')).toHaveTextContent('Retired'),
+    );
+  });
+
+  it('ignores a second press that lands before the first resolves', async () => {
+    // The screen's own ref guard. The hook is mocked precisely so it cannot
+    // decline on this screen's behalf.
+    const pending = deferred<PublicClothingItem>();
+    setRetiredMutation.mockReturnValueOnce(pending.promise);
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(setRetiredMutation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve(item({ retired: true }));
+    });
+  });
+
+  it('leaves the status untouched when the toggle fails', async () => {
+    // `null` is the hook's failure signal. Painting the attempted status over
+    // the row would report a write that did not happen.
+    setRetiredMutation.mockResolvedValueOnce(null);
+    mockedUseRetireItem.mockReturnValue({
+      setRetired: setRetiredMutation,
+      pending: false,
+      error: 'Nope',
+    });
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(screen.getByTestId('item-detail-retired')).toHaveTextContent('Active');
+    expect(screen.getByTestId('item-retire-error')).toHaveTextContent('Nope');
+  });
+
+  it('marks the tracking data dirty after a successful toggle', async () => {
+    // The wardrobe grid is holding an item whose badge just changed, and the
+    // composer's selectable set just gained or lost a garment.
+    setRetiredMutation.mockResolvedValueOnce(item({ retired: true }));
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(consumeTrackingDirty('wardrobe')).toBe(true);
+  });
+
+  it('marks nothing dirty when the toggle fails', async () => {
+    setRetiredMutation.mockResolvedValueOnce(null);
+    await renderReady(item({ retired: false }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-retire-toggle'));
+    });
+
+    expect(consumeTrackingDirty('wardrobe')).toBe(false);
+  });
+});
+
+/**
+ * Deleting an item.
+ *
+ * The confirmation is INLINE rather than an `Alert.alert`, for the reason
+ * `app/outfits/[id].tsx` records: a native modal is invisible to every test in
+ * this repo and would stall the device gate behind a dialog nothing can press.
+ */
+describe('ItemDetailScreen — deleting an item', () => {
+  beforeEach(() => {
+    mockedUseAuth.mockReturnValue({
+      status: 'authenticated',
+      user: null,
+      token: TOKEN,
+      signIn: jest.fn(),
+      signUp: jest.fn(),
+      signOut: jest.fn(),
+    });
+    mockedUseLocalSearchParams.mockReturnValue({ id: 'item-1' });
+    canGoBack.mockReturnValue(true);
+    mockedUseRouter.mockReturnValue({ back, replace, canGoBack });
+    mockedUseLaundryStatus.mockReturnValue({ setStatus, pending: false, error: null });
+    mockedUseRetireItem.mockReturnValue({
+      setRetired: setRetiredMutation,
+      pending: false,
+      error: null,
+    });
+  });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+    TRACKING_READERS.forEach((reader) => consumeTrackingDirty(reader));
+  });
+
+  it('does not delete on the first press — it arms a confirmation', async () => {
+    await renderReady(item());
+
+    expect(screen.queryByTestId('item-delete-prompt')).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+
+    expect(screen.getByTestId('item-delete-prompt')).toBeTruthy();
+    // THE POINT of the two-step: one press must not destroy anything.
+    expect(mockedDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('deletes once the confirmation is pressed', async () => {
+    mockedDeleteItem.mockResolvedValueOnce(undefined);
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(mockedDeleteItem).toHaveBeenCalledWith('item-1', TOKEN);
+  });
+
+  it('goes back after a successful delete', async () => {
+    mockedDeleteItem.mockResolvedValueOnce(undefined);
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(back).toHaveBeenCalled();
+  });
+
+  it('disarms the prompt on cancel, so a stray tap cannot still fire it', async () => {
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-cancel'));
+    });
+
+    expect(screen.queryByTestId('item-delete-prompt')).toBeNull();
+    expect(screen.getByTestId('item-delete')).toBeTruthy();
+    expect(mockedDeleteItem).not.toHaveBeenCalled();
+  });
+
+  it('ignores a second confirm that lands before the first resolves', async () => {
+    // A double tap here is the worst race on this screen: the second request
+    // answers 404 (the route is deliberately not idempotent-silent), so the
+    // user would be shown an error for a deletion that in fact succeeded.
+    const pending = deferred<void>();
+    mockedDeleteItem.mockReturnValueOnce(pending.promise);
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(mockedDeleteItem).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve();
+    });
+  });
+
+  it('treats a 404 as success — the item is gone either way', async () => {
+    // Treating it as a failure would strand the user on an item that can never
+    // be deleted, because every retry answers 404 too.
+    mockedDeleteItem.mockRejectedValueOnce(new ApiClientError('NOT_FOUND', 'Item not found', 404));
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(back).toHaveBeenCalled();
+    expect(screen.queryByTestId('item-delete-error')).toBeNull();
+  });
+
+  it('keeps the prompt armed and shows the message on any other failure', async () => {
+    mockedDeleteItem.mockRejectedValueOnce(new ApiClientError('UNKNOWN', 'Server exploded', 500));
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(back).not.toHaveBeenCalled();
+    expect(screen.getByTestId('item-delete-error')).toHaveTextContent('Server exploded');
+    // The confirm button IS the retry, so the prompt must still be there.
+    expect(screen.getByTestId('item-delete-confirm')).toBeTruthy();
+  });
+
+  it('marks the wardrobe dirty after a successful delete', async () => {
+    mockedDeleteItem.mockResolvedValueOnce(undefined);
+    await renderReady(item());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('item-delete-confirm'));
+    });
+
+    expect(consumeTrackingDirty('wardrobe')).toBe(true);
   });
 });

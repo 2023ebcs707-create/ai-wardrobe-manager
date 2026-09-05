@@ -7,7 +7,7 @@ import type { PublicClothingItem } from '@wardrobe/shared';
 // seam instead (the same one `src/api/client.test.ts` uses).
 import { ApiClientError } from '../api/client';
 import { API_BASE_URL } from '../config';
-import { fetchItem, fetchItems } from './api';
+import { deleteItem, fetchItem, fetchItems, setRetired } from './api';
 
 // A fresh Response per call: a `Response` body can only be read once, so a
 // single `mockResolvedValue` instance makes the *second* call in a test fail
@@ -35,6 +35,7 @@ const jacket: PublicClothingItem = {
   colors: [{ hex: '#123456', name: 'navy', share: 1 }],
   seasons: ['winter'],
   laundryStatus: 'available',
+  retired: false,
   wearCount: 3,
   source: 'ai',
   aiConfidence: 0.82,
@@ -51,6 +52,7 @@ const shoes: PublicClothingItem = {
   colors: [],
   seasons: [],
   laundryStatus: 'in_laundry',
+  retired: false,
   wearCount: 0,
   source: 'manual',
   createdAt: '2026-07-30T09:00:00.000Z',
@@ -161,6 +163,87 @@ describe('fetchItem', () => {
     mockFetch({ error: { code: 'NOT_FOUND', message: 'Item not found' } }, 404);
 
     await expect(fetchItem('item-1', 'tok-abc')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  });
+});
+
+describe('setRetired', () => {
+  it('PATCHes the retire sub-path and unwraps the item', async () => {
+    const retired = { ...jacket, retired: true };
+    const spy = mockFetch({ item: retired });
+
+    await expect(setRetired('item-1', { token: 'tok-abc', retired: true })).resolves.toEqual(
+      retired,
+    );
+
+    expect(requestedUrl(spy)).toBe(`${API_BASE_URL}/items/item-1/retire`);
+    const init = spy.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ retired: true });
+    expect(requestedHeaders(spy).Authorization).toBe('Bearer tok-abc');
+  });
+
+  it('sends false as false, so un-retiring is reachable', async () => {
+    const spy = mockFetch({ item: jacket });
+
+    await setRetired('item-1', { token: 'tok-abc', retired: false });
+
+    expect(JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      retired: false,
+    });
+  });
+
+  it('url-encodes the id', async () => {
+    const spy = mockFetch({ item: jacket });
+
+    await setRetired('../auth/me', { token: 'tok-abc', retired: true });
+
+    expect(requestedUrl(spy)).toBe(`${API_BASE_URL}/items/..%2Fauth%2Fme/retire`);
+  });
+
+  it('propagates ApiClientError', async () => {
+    mockFetch({ error: { code: 'NOT_FOUND', message: 'Item not found' } }, 404);
+
+    await expect(setRetired('item-1', { token: 'tok-abc', retired: true })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  });
+});
+
+describe('deleteItem', () => {
+  it('DELETEs the item and reads no body', async () => {
+    // `DELETE /items/:id` answers 204 with no body at all. `apiRequest` reads
+    // it as text and only parses when non-empty — a client that parsed
+    // unconditionally would turn every successful delete into an error.
+    const spy = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+
+    await expect(deleteItem('item-1', 'tok-abc')).resolves.toBeUndefined();
+
+    expect(String(spy.mock.calls[0][0])).toBe(`${API_BASE_URL}/items/item-1`);
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
+  });
+
+  it('url-encodes the id', async () => {
+    const spy = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+
+    await deleteItem('../auth/me', 'tok-abc');
+
+    expect(String(spy.mock.calls[0][0])).toBe(`${API_BASE_URL}/items/..%2Fauth%2Fme`);
+  });
+
+  it('propagates ApiClientError rather than resolving on a 404', async () => {
+    // The route is deliberately NOT idempotent-silent, so a caller must not
+    // retry blindly on failure.
+    mockFetch({ error: { code: 'NOT_FOUND', message: 'Item not found' } }, 404);
+
+    await expect(deleteItem('item-1', 'tok-abc')).rejects.toMatchObject({
       code: 'NOT_FOUND',
       status: 404,
     });

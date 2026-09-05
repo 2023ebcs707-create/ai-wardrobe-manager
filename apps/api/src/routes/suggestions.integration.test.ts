@@ -312,6 +312,35 @@ describe('GET /suggestions', () => {
     expect(res.body.excludedInLaundry).toBe(1);
   });
 
+  it('excludes retired items from the engine and counts them separately from in-laundry ones', async () => {
+    const { top, bottom } = await seedPair(ownerId);
+    await seedItem(ownerId, { category: 'shirt', retired: true });
+    await seedItem(ownerId, { category: 'shoes', laundryStatus: 'in_laundry' });
+
+    const spy = stubEngine({
+      suggestions: [{ itemIds: [top.id, bottom.id], score: 0.9, rationale: 'stub' }],
+    });
+    const res = await suggestions();
+
+    expect(res.status).toBe(200);
+    expect(res.body.excludedRetired).toBe(1);
+    expect(res.body.excludedInLaundry).toBe(1);
+    // Never sent to the engine at all, distinctly from being sent and then
+    // filtered on the way back.
+    expect(engineRequest(spy).items.map((i: { id: string }) => i.id)).toEqual([top.id, bottom.id]);
+  });
+
+  it('counts only the caller\'s retired items', async () => {
+    const other = await registerOther('other@example.com');
+    await seedItem(other.id, { category: 'shirt', retired: true });
+    await seedItem(ownerId, { category: 'shirt', retired: true });
+
+    stubEngine({ suggestions: [] });
+    const res = await suggestions();
+    expect(res.status).toBe(200);
+    expect(res.body.excludedRetired).toBe(1);
+  });
+
   // --- Ordering ---------------------------------------------------------------
 
   // The engine composes "top, bottom, shoes", and that order is the outfit.
@@ -479,7 +508,7 @@ describe('GET /suggestions', () => {
   it('returns an empty list, not an error, for an empty wardrobe', async () => {
     const res = await suggestions();
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ suggestions: [], excludedInLaundry: 0 });
+    expect(res.body).toEqual({ suggestions: [], excludedInLaundry: 0, excludedRetired: 0 });
   }, 20000);
 
   // Nothing downstream bounds this: the engine accepts any string and ignores

@@ -44,6 +44,7 @@ function item(id: string, category: ItemCategory = 'tshirt'): PublicClothingItem
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',

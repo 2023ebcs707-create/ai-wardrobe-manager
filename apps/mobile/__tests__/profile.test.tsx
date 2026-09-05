@@ -84,6 +84,7 @@ function item(id: string, overrides: Partial<PublicClothingItem> = {}): PublicCl
     colors: [{ hex: '#ffffff', name: 'white', share: 1 }],
     seasons: ['summer'],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 2,
     source: 'ai',
     createdAt: '2026-08-01T10:00:00.000Z',
