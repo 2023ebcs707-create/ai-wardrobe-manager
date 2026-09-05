@@ -209,11 +209,13 @@ export function createWearHistoryRouter(config: Config): Router {
     // under-reporting their wear count for good, which is the number Task 2's
     // "most/least worn" ranks on.
     //
-    // In every state reachable through this API the counts must be equal:
-    // `resolveOwnedItems` guarantees an outfit's items are owned by its owner
-    // and distinct, and no `DELETE /items` exists. So a mismatch means either a
-    // direct database write or a future path that relaxed one of those two
-    // guarantees -- both worth a line naming the row.
+    // A mismatch is now ORDINARY rather than impossible: `DELETE /items/:id`
+    // removes a garment without touching the outfits that reference it, so an
+    // outfit worn after one of its items was deleted snapshots more ids than
+    // the fan-out can match. `resolveOwnedItems` still guarantees the ids were
+    // owned and distinct when the outfit was composed, so a mismatch means a
+    // deleted item (expected) or a direct database write (not) -- and the line
+    // below is what tells the two apart after the fact.
     //
     // Logged rather than thrown, deliberately. The event is written and the
     // wear DID happen; failing the request now would tell the client to retry,

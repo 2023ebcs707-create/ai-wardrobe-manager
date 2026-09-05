@@ -210,7 +210,20 @@ export function OutfitComposer({
   onSavingChange,
 }: OutfitComposerProps) {
   const { token } = useAuth();
-  const { items, category, setCategory, activity, error, loadMore, refresh } = useWardrobe();
+  const { items: wardrobeItems, category, setCategory, activity, error, loadMore, refresh } =
+    useWardrobe();
+
+  /**
+   * The wardrobe grid MINUS retired items — the deliberate OPPOSITE of how
+   * this composer treats an in-laundry one, which stays selectable (ruling 3:
+   * the composer must show it, because there the user is choosing). A retired
+   * item is a harder exclusion: the user asked not to be able to select it at
+   * all, and the same rule is enforced server-side in `resolveOwnedItems`
+   * (`apps/api/src/routes/outfits.ts`) — this is the client half, so a
+   * retired item never even appears to be pickable rather than being pickable
+   * and then rejected on save.
+   */
+  const items = useMemo(() => wardrobeItems.filter((item) => !item.retired), [wardrobeItems]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>(() =>
     normalisePreselection(preselectedItemIds),

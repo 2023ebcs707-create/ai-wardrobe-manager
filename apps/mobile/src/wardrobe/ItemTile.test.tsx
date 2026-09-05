@@ -50,6 +50,7 @@ function item(overrides: Partial<PublicClothingItem> = {}): PublicClothingItem {
     ],
     seasons: ['winter'],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 3,
     source: 'ai',
     createdAt: '2026-08-01T10:00:00.000Z',

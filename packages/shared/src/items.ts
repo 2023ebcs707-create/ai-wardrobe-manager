@@ -67,6 +67,19 @@ export interface PublicClothingItem {
   colors: ItemColor[];
   seasons: Season[];
   laundryStatus: LaundryStatus;
+  /**
+   * Whether this item is in the active wardrobe — as opposed to `laundryStatus`,
+   * which tracks whether a currently-active item happens to be clean right now.
+   *
+   * A retired item (lost, given away, sold, worn out) is excluded from
+   * `POST /outfits`'s item resolution and from `GET /suggestions`'s candidate
+   * pool, but is NOT hidden from the wardrobe grid or from an outfit that
+   * already references it — the same "still shown, never proposed" treatment
+   * this app already gives an in-laundry item, applied one layer further out.
+   * See `resolveOwnedItems` in `apps/api/src/routes/outfits.ts` and the laundry
+   * filter in `apps/api/src/routes/suggestions.ts`.
+   */
+  retired: boolean;
   wearCount: number;
   lastWornAt?: string;
   source: 'manual' | 'ai';

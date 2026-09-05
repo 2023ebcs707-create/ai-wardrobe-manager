@@ -38,6 +38,11 @@ const clothingItemSchema = new Schema(
     // the DENORMALISED current status; the transitions that produced it live
     // in the `LaundryStatus` log, and `PATCH /items/:id/laundry` writes both.
     laundryStatus: { type: String, enum: LAUNDRY_STATUSES, default: 'available' },
+    // Separate from `laundryStatus` on purpose — see `PublicClothingItem.retired`
+    // in `@wardrobe/shared`. Declared explicitly for the same reason `share` and
+    // `aiCategory` are: Mongoose's default strict mode silently drops any path
+    // the schema does not name.
+    retired: { type: Boolean, default: false },
     wearCount: { type: Number, default: 0 },
     lastWornAt: { type: Date },
     source: { type: String, enum: ['manual', 'ai'], required: true },
@@ -153,6 +158,7 @@ export function toPublicItem(doc: ClothingItemDoc, imageUrl: string, thumbnailUr
     })),
     seasons: doc.seasons as PublicClothingItem['seasons'],
     laundryStatus: doc.laundryStatus as PublicClothingItem['laundryStatus'],
+    retired: doc.retired,
     wearCount: doc.wearCount,
     ...(doc.lastWornAt ? { lastWornAt: doc.lastWornAt.toISOString() } : {}),
     source: doc.source as PublicClothingItem['source'],

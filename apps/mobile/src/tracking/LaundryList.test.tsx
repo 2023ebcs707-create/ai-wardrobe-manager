@@ -29,6 +29,7 @@ function item(id: string, laundryStatus: LaundryStatus, overrides: Partial<Publi
     colors: [{ hex: '#ffffff', name: 'white', share: 1 }],
     seasons: ['summer'],
     laundryStatus,
+    retired: false,
     wearCount: 2,
     source: 'ai',
     createdAt: '2026-08-01T10:00:00.000Z',

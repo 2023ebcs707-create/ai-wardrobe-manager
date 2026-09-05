@@ -154,6 +154,7 @@ function SuggestionsPane({
   // leave the collision in place.
   const suggestions = (snapshot?.suggestions ?? []).filter((each) => each.items.length > 0);
   const laundryNotice = snapshot?.laundryNotice ?? null;
+  const retiredNotice = snapshot?.retiredNotice ?? null;
 
   // A full load with nothing renderable behind it: first mount, or a token
   // change (both clear the snapshot). A `refreshing` load keeps the shortlist
@@ -239,6 +240,18 @@ function SuggestionsPane({
         </Text>
       ) : null}
 
+      {/* The retired count, as its OWN sentence beside the laundry one rather
+          than merged into it — see `retiredNoticeFor`. Every word of the
+          constraint above applies here unchanged: it is a fact about the
+          wardrobe, never a claim about what the shortlist would otherwise
+          have held. Two separate sentences also keep the two actions a user
+          might take apart: doing laundry, and un-retiring a garment. */}
+      {retiredNotice !== null ? (
+        <Text testID="suggestions-retired-notice" style={styles.laundryNotice}>
+          {retiredNotice}
+        </Text>
+      ) : null}
+
       {showFirstLoadSpinner ? (
         <View testID="suggestions-loading" style={styles.centre}>
           <ActivityIndicator size="large" color={color.soft} />
@@ -321,10 +334,11 @@ export default function AddScreen() {
    * second press sees `add-save`'s `disabled` prop still `false` AND invokes
    * the same `onSave` closure the first one did, still holding
    * `busy === false`. Both state-based defences miss it, and the result is two
-   * `POST /items`: two ClothingItem documents, two MinIO objects, two
-   * identical tiles — and **no way to remove either**, because this API has no
-   * `DELETE /items` (Stage 5 ruling 3). There is no idempotency key and
-   * nothing de-duplicates downstream.
+   * `POST /items`: two ClothingItem documents, two MinIO objects and two
+   * identical tiles, which the user then has to find and delete one of by hand
+   * from the item detail screen. There is no idempotency key and nothing
+   * de-duplicates downstream, so the guard is still what keeps that from
+   * happening at all.
    *
    * Found by review of Stage 5 Task 4, which had already hit and fixed the
    * identical bug on the outfit composer's save button; the same reasoning is

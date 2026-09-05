@@ -53,6 +53,7 @@ const item: PublicClothingItem = {
   colors: [],
   seasons: [],
   laundryStatus: 'available',
+  retired: false,
   wearCount: 0,
   source: 'manual',
   createdAt: '2026-01-01T00:00:00.000Z',

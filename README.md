@@ -115,6 +115,43 @@ This project verifies exclusively on a physical Android device via Expo Go — n
 
 Port forwarding is cleared whenever the connection drops (cable unplugged, Wi-Fi change, wireless-debugging session ended) or the phone reboots — re-run `pnpm device` after any of those. If the app shows "Cannot reach API," check the forward before suspecting the code.
 
+## Item availability, deletion, and planned outfits
+
+Three capabilities added on top of the wardrobe described above.
+
+### Active / Retired items
+
+Every `ClothingItem` carries a boolean `retired`, **separate from `laundryStatus`** and meaning something different: laundry is temporary and says whether a garment is currently clean, while retired says the garment is out of the active wardrobe altogether (lost, given away, worn out).
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `PATCH /items/:id/retire` | Body `{ retired: boolean }`. Returns the updated `PublicClothingItem`. No transition log — nothing asks *when* an item was retired, only whether it is now. |
+| `DELETE /items/:id` | `204`. Deletes the item and best-effort-deletes its stored objects. **Not idempotent-silent**: deleting an id that is gone or foreign is a 404. |
+
+The two exclusions a retired item is subject to, and the one it deliberately is not:
+
+- **`POST`/`PATCH /outfits` reject it** (`resolveOwnedItems`), with `Item is retired` — a distinct message from `Unknown item`, because the item *is* owned and found. A name-only `PATCH` never resolves items, so renaming an outfit that already contains a since-retired garment still works.
+- **`GET /suggestions` withholds it** from the engine, counted separately as `excludedRetired` beside the existing `excludedInLaundry`. The two counts stay independent because a merged number could not be un-added into "how many are in the wash" versus "how many are retired" — two different actions a user might take.
+- **The wardrobe grid still shows it**, badged and dimmed, exactly as an in-laundry item is. `OutfitComposer` is where it is filtered out, which is the deliberate opposite of how the composer treats laundry (that must stay selectable — the user is choosing; a suggestion is the system choosing).
+
+**There is no cascade delete.** Deleting an item leaves its id in place on every outfit and wear-history row that referenced it — those read paths already tolerate an unresolvable id and degrade rather than fail, which is exactly what that tolerance was built for.
+
+### Planned outfits
+
+`POST /wear-history` rejects a future `wornAt` on purpose, and that stays true. A plan is its own record instead, on `/outfit-plans`:
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `POST /outfit-plans` | Body `{ outfitId, plannedFor, occasion? }`. Rejects a `plannedFor` in the past — the exact mirror of `resolveWornAt`'s future check, same strictness, same absence of skew tolerance. |
+| `GET /outfit-plans?from=&to=` | Both bounds **required**; unpaginated, soonest first. The bounds are what keep "unpaginated" from meaning "unbounded". |
+| `DELETE /outfit-plans/:id` | `204`, ownership-scoped, 404 otherwise. |
+
+**A plan is not a wear, and nothing reconciles the two.** It touches no `ClothingItem`: no `wearCount` moves and no `lastWornAt` is stamped, so `GET /analytics/usage` can never rank a garment by a day that has not happened. A user can plan an outfit and then log it normally when the day comes, wear something else, or let the plan lapse.
+
+**Clients must send local noon** for the chosen day (`plannedForOn` in `apps/mobile/src/calendar/api.ts`). Local midnight for *today* is already hours in the past and would be refused; noon is the instant that is unambiguous on the day it names in either DST direction — the same reasoning `wornAtFor` already applies in the backwards-looking direction.
+
+On the Calendar tab a future day now offers "Plan an outfit" where it previously offered nothing, and a planned day is marked with a **hollow** ring where a worn day has a filled dot — a shape difference, so it survives greyscale and colour-blindness.
+
 ## Running the test suites
 
 | Command | What it runs |
@@ -142,6 +179,8 @@ apps/
   api/            Express API (TypeScript, ts-node in dev)
   mobile/         Expo Router app (five tabs: Wardrobe, Community, Add, Outfits, Calendar)
                   Profile is a pushed route, reached from the wardrobe header avatar
+                  app/calendar/[date].tsx       log what was worn on a past day
+                  app/calendar/plan/[date].tsx  plan an outfit for a future day
                   src/theme/  the "Soft" design system — tokens, type scale, components
 packages/
   shared/         Types shared between the API and the mobile app

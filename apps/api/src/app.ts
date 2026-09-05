@@ -1,3 +1,4 @@
+import cors from 'cors';
 import express, { type Express } from 'express';
 import { overallStatus, type HealthResponse } from '@wardrobe/shared';
 import { safeCheck, type HealthChecks } from './health/checks';
@@ -6,6 +7,7 @@ import { createAuthRouter } from './routes/auth';
 import { createItemsRouter } from './routes/items';
 import { createOutfitsRouter } from './routes/outfits';
 import { createWearHistoryRouter } from './routes/wearHistory';
+import { createOutfitPlansRouter } from './routes/outfitPlans';
 import { createAnalyticsRouter } from './routes/analytics';
 import { createSuggestionsRouter } from './routes/suggestions';
 import { createCommunityRouter } from './routes/community';
@@ -14,6 +16,7 @@ import type { StorageProvider } from './storage/StorageProvider';
 
 export function createApp(checks: HealthChecks, config: Config, storage: StorageProvider): Express {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.get('/health', async (_req, res) => {
@@ -32,6 +35,12 @@ export function createApp(checks: HealthChecks, config: Config, storage: Storage
   app.use('/outfits', createOutfitsRouter(config, storage));
   // No storage dependency: a wear event carries ids and dates, never an image.
   app.use('/wear-history', createWearHistoryRouter(config));
+  // Forward-looking counterpart to /wear-history, and deliberately a separate
+  // resource rather than a flag on one: a plan must not move the wear counters
+  // that "most/least worn" ranks on. See `PublicOutfitPlan` in
+  // `@wardrobe/shared`. No storage dependency — a plan carries ids and a date,
+  // never an image.
+  app.use('/outfit-plans', createOutfitPlansRouter(config));
   // Storage IS a dependency here: the usage rankings return whole
   // PublicClothingItems, with the same signed URLs GET /items hands out.
   app.use('/analytics', createAnalyticsRouter(config, storage));

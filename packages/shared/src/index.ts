@@ -5,4 +5,5 @@ export * from './items';
 export * from './outfits';
 export * from './suggestions';
 export * from './tracking';
+export * from './outfitPlans';
 export * from './community';

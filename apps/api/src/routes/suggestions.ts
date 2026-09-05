@@ -190,10 +190,16 @@ export function createSuggestionsRouter(config: Config, storage: StorageProvider
     // the SYSTEM choosing, and a system that proposes a garment sitting in
     // the wash is unhelpful. Filtering what the system proposes is a
     // different act from hiding what the user may pick.
-    const wearable = docs.filter((doc) => doc.laundryStatus !== IN_LAUNDRY);
+    // A retired item is withheld for a different reason than an in-laundry
+    // one and the two counts must stay independently readable (see
+    // `PublicSuggestions.excludedRetired`), so each filter's own removals are
+    // counted against the stage before it rather than against `docs` twice.
+    const notRetired = docs.filter((doc) => !doc.retired);
+    const excludedRetired = docs.length - notRetired.length;
+    const wearable = notRetired.filter((doc) => doc.laundryStatus !== IN_LAUNDRY);
     // Derived from the same partition rather than counted separately, so the
     // number and the filter cannot disagree about what was withheld.
-    const excludedInLaundry = docs.length - wearable.length;
+    const excludedInLaundry = notRetired.length - wearable.length;
 
     const result = await requestSuggestions(
       wearable.map(toEngineItem),
@@ -250,6 +256,7 @@ export function createSuggestionsRouter(config: Config, storage: StorageProvider
     const body: PublicSuggestions = {
       suggestions,
       excludedInLaundry,
+      excludedRetired,
       // Passed through only when the engine actually disclosed something, so
       // a caller who sent no `occasion` sees the documented two-field shape
       // unchanged. See `PublicSuggestions.ignored` for why an inert parameter

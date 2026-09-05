@@ -3,6 +3,7 @@ import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ItemColor, PublicClothingItem } from '@wardrobe/shared';
 import { IN_LAUNDRY_LABEL, LaundryBadge, isInLaundry } from '../tracking/LaundryBadge';
+import { RETIRED_LABEL, RetiredBadge, isRetired } from './RetiredBadge';
 import { categoryLabel } from '../format/text';
 import { color, radius, shadow, space } from '../theme/tokens';
 import { font, text } from '../theme/type';
@@ -96,6 +97,18 @@ export function ItemTile({ item, onPress, selected, selectionIndex, layout = 'ti
    * from an image that failed to load.
    */
   const inLaundry = isInLaundry(item);
+  /**
+   * Whether the item is out of the active wardrobe. Read off `item.retired`
+   * and nothing else, for the identical reason `inLaundry` is: one reading,
+   * shared by the badge and the dimming below.
+   *
+   * TAKES PRECEDENCE over the laundry treatment when both are true — see
+   * `retiredOrInLaundry` below and `RetiredBadge`'s header for why: retired is
+   * the more final of the two facts, and the tile's one free centre slot can
+   * only hold one caption at a time.
+   */
+  const retired = isRetired(item);
+  const retiredOrInLaundry = retired || inLaundry;
 
   // Pre-Stage-4 uploads have no thumbnail — nothing ever wrote `thumbnailKey`
   // until Task 2 of this stage — and the full image is what keeps them
@@ -127,7 +140,9 @@ export function ItemTile({ item, onPress, selected, selectionIndex, layout = 'ti
       ? `${describedItem}, item ${selectionIndex} of the outfit`
       : describedItem;
 
-  // The laundry status, spoken.
+  // The retired/laundry status, spoken — retired taking the same precedence
+  // as the visual badge, so the one thing a screen reader says never claims
+  // more than the one caption a sighted user sees.
   //
   // A badge and a dimmed photograph are both invisible to a screen reader, so
   // without this the treatment simply does not exist for a TalkBack user — and
@@ -135,14 +150,18 @@ export function ItemTile({ item, onPress, selected, selectionIndex, layout = 'ti
   // distinguished for people who can see it.
   //
   // It goes in the LABEL and NOT in `accessibilityState`. `disabled` would be
-  // the wrong word and an actively harmful one: an item in the wash is
-  // annotated, not disabled. The tap still opens its details, the composer
-  // still lets it into an outfit, and TalkBack announces a disabled control as
-  // unavailable — telling the user the cell does nothing, which is false.
-  // There is no `accessibilityState` member that means "annotated".
-  const accessibilityLabel = inLaundry
-    ? `${selectionDescribed}, ${IN_LAUNDRY_LABEL}`
-    : selectionDescribed;
+  // the wrong word and an actively harmful one: an item in the wash — or a
+  // retired one — is annotated, not disabled. The tap still opens its
+  // details, the composer still lets an in-laundry item into an outfit (a
+  // retired one is filtered out upstream — see `OutfitComposer`), and
+  // TalkBack announces a disabled control as unavailable — telling the user
+  // the cell does nothing, which is false. There is no `accessibilityState`
+  // member that means "annotated".
+  const accessibilityLabel = retired
+    ? `${selectionDescribed}, ${RETIRED_LABEL}`
+    : inLaundry
+      ? `${selectionDescribed}, ${IN_LAUNDRY_LABEL}`
+      : selectionDescribed;
 
   // "Opens this item's details" is simply false inside the composer, where the
   // same tap adds or removes the item.
@@ -193,8 +212,9 @@ export function ItemTile({ item, onPress, selected, selectionIndex, layout = 'ti
             // badge's contrast does — a tint would not. Applied to the image
             // alone rather than to the surface, so the caption over it stays at
             // full strength; dimming the whole surface would dim the one thing
-            // that has to stay readable.
-            style={[styles.image, inLaundry && styles.imageInLaundry]}
+            // that has to stay readable. Shared with the retired treatment —
+            // same dip, whichever caption is showing above it.
+            style={[styles.image, retiredOrInLaundry && styles.imageInLaundry]}
             resizeMode="cover"
             // Decorative here: the Pressable above already carries the label, so
             // an image label would make a screen reader read every cell twice.
@@ -295,17 +315,19 @@ export function ItemTile({ item, onPress, selected, selectionIndex, layout = 'ti
             </View>
           ) : null}
 
-          {/* FR7 / TC-09. Driven by the item, not by a prop — see `inLaundry`
-              above — and genuinely the LAST child of the photograph, so it
-              paints over it AND over the other three marks rather than under
-              them. It takes the centre, the one region the category badge
-              (top-left), the selection ordinal (top-right) and the colour
-              swatches (bottom-right) cannot reach.
+          {/* FR7 / TC-09, plus the retired treatment. Driven by the item, not
+              by a prop — see `inLaundry`/`retired` above — and genuinely the
+              LAST child of the photograph, so it paints over it AND over the
+              other three marks rather than under them. It takes the centre,
+              the one region the category badge (top-left), the selection
+              ordinal (top-right) and the colour swatches (bottom-right)
+              cannot reach.
 
-              Rendering it unconditionally is one of this task's mutations: it
-              paints "In laundry" across a wardrobe where nothing is, and every
-              single-tile assertion still passes. */}
-          <LaundryBadge item={item} />
+              MUTUALLY EXCLUSIVE, never both: the centre slot holds one
+              caption, and a retired item takes precedence — it is the more
+              final of the two facts. See `RetiredBadge`'s header for why this
+              is a second component rather than a third `LaundryBadge` state. */}
+          {retired ? <RetiredBadge item={item} /> : <LaundryBadge item={item} />}
         </View>
 
         {/* The caption — CARD LAYOUT ONLY. What the garment is, the colour the

@@ -29,6 +29,12 @@ Not decided here, on purpose:
     service -- the request shape carries no `laundryStatus`. The caller
     filters before calling and reports the exclusion in its own response.
     Duplicating the filter here would mean two places to get it wrong.
+  * RETIRED EXCLUSION, on exactly the same terms. A retired garment is one
+    the user has taken out of their active wardrobe; `retired` lives in Mongo
+    beside `laundryStatus` and likewise never reaches this service. The caller
+    filters it out before calling and reports the count as `excludedRetired`.
+    This engine ranks whatever it is given, and that is the whole contract:
+    WHICH garments are eligible is a wardrobe question, not a colour one.
   * OCCASION. `suggest()` accepts it because the spec's interface declares
     it, and ignores it because no item in this system carries occasion data.
     Any occasion rule would have to be invented from nothing, and TC-10 does

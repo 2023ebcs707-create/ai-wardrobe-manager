@@ -40,6 +40,7 @@ const shirt: PublicClothingItem = {
   colors: [{ hex: '#123456', name: 'navy', share: 1 }],
   seasons: ['winter'],
   laundryStatus: 'available',
+  retired: false,
   wearCount: 3,
   source: 'ai',
   createdAt: '2026-08-01T10:00:00.000Z',
@@ -53,6 +54,7 @@ const trousers: PublicClothingItem = {
   colors: [],
   seasons: [],
   laundryStatus: 'available',
+  retired: false,
   wearCount: 0,
   source: 'manual',
   createdAt: '2026-07-30T09:00:00.000Z',
@@ -68,6 +70,7 @@ const body: PublicSuggestions = {
     },
   ],
   excludedInLaundry: 2,
+  excludedRetired: 0,
 };
 
 afterEach(() => {

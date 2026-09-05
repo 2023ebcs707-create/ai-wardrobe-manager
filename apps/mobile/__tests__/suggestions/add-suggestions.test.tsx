@@ -64,6 +64,7 @@ function item(id: string, category: ItemCategory = 'tshirt'): PublicClothingItem
     colors: [],
     seasons: [],
     laundryStatus: 'available',
+    retired: false,
     wearCount: 0,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',
@@ -100,7 +101,7 @@ const push = jest.fn();
 /** The hook's contract, defaulted to "loaded, with two suggestions". */
 function suggestions(overrides: Partial<UseSuggestionsResult> = {}): UseSuggestionsResult {
   const value: UseSuggestionsResult = {
-    snapshot: { suggestions: [FIRST, SECOND], laundryNotice: null },
+    snapshot: { suggestions: [FIRST, SECOND], laundryNotice: null, retiredNotice: null },
     unavailable: false,
     activity: 'idle',
     error: null,
@@ -292,7 +293,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
       // A failed request leaves the last good snapshot alone, so without the
       // `error === null` conjunct a user whose retry just failed would be told
       // to go and add items by a screen that had learned nothing.
-      suggestions({ snapshot: { suggestions: [], laundryNotice: null }, error: 'Something broke' });
+      suggestions({ snapshot: { suggestions: [], laundryNotice: null, retiredNotice: null }, error: 'Something broke' });
       await showSuggestions();
 
       expect(screen.queryByTestId('suggestions-empty')).toBeNull();
@@ -300,7 +301,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
     });
 
     it('tells the user to add items when the engine genuinely had nothing to propose', async () => {
-      suggestions({ snapshot: { suggestions: [], laundryNotice: null } });
+      suggestions({ snapshot: { suggestions: [], laundryNotice: null, retiredNotice: null } });
       await showSuggestions();
 
       const empty = screen.getByTestId('suggestions-empty');
@@ -338,7 +339,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
       // it. Split that catch and, without the conjunct, an outage silently
       // becomes "add a few items first".
       suggestions({
-        snapshot: { suggestions: [], laundryNotice: null },
+        snapshot: { suggestions: [], laundryNotice: null, retiredNotice: null },
         unavailable: true,
         error: null,
       });
@@ -392,7 +393,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
       // normalisation, so this fails if anything at all is wrapped around the
       // sentence.
       suggestions({
-        snapshot: { suggestions: [FIRST], laundryNotice: '3 items are in the laundry' },
+        snapshot: { suggestions: [FIRST], laundryNotice: '3 items are in the laundry', retiredNotice: null },
       });
       await showSuggestions();
 
@@ -410,7 +411,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
     it('renders nothing when the wardrobe has nothing in the wash', async () => {
       // `null` at zero, so the screen does not say "0 items are in the laundry"
       // — which reads as a warning about a wardrobe that has none.
-      suggestions({ snapshot: { suggestions: [FIRST], laundryNotice: null } });
+      suggestions({ snapshot: { suggestions: [FIRST], laundryNotice: null, retiredNotice: null } });
       await showSuggestions();
 
       expect(screen.queryByTestId('suggestions-laundry-notice')).toBeNull();
@@ -418,7 +419,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
 
     it('shows the notice beside an empty shortlist, which is where it earns its place', async () => {
       // A thin result gets CONTEXT rather than an explanation.
-      suggestions({ snapshot: { suggestions: [], laundryNotice: '2 items are in the laundry' } });
+      suggestions({ snapshot: { suggestions: [], laundryNotice: '2 items are in the laundry', retiredNotice: null } });
       await showSuggestions();
 
       expect(screen.getByTestId('suggestions-laundry-notice')).toHaveTextContent(
@@ -482,7 +483,7 @@ describe('AddScreen suggestions mode (Stage 7, FR8 / TC-10)', () => {
             { items: [], saveItemIds: [], score: 0.5, rationale: 'nothing resolved either' },
             FIRST,
           ],
-          laundryNotice: null,
+          laundryNotice: null, retiredNotice: null,
         },
       });
       await showSuggestions();

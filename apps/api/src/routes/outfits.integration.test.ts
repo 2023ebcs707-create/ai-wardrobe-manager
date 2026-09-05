@@ -194,6 +194,18 @@ describe('POST /outfits (TC-07 outfit creation)', () => {
     expect(await Outfit.countDocuments({})).toBe(0);
   });
 
+  it('rejects a retired item with 400, distinct from Unknown item', async () => {
+    const active = await seedItem(ownerId);
+    const retired = await seedItem(ownerId, { retired: true });
+
+    const res = await post({ itemIds: [String(active._id), String(retired._id)] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toBe('Item is retired');
+    expect(res.body.error.message).not.toBe('Unknown item');
+    expect(await Outfit.countDocuments({})).toBe(0);
+  });
+
   it('rejects a malformed itemId with 400', async () => {
     const res = await post({ itemIds: ['not-an-object-id'] });
     expect(res.status).toBe(400);
@@ -752,6 +764,34 @@ describe('PATCH /outfits/:id (edit)', () => {
     // And a follow-up read cannot surface the foreign item either.
     const after = await detail(String(outfit._id));
     expect(after.body.outfit.items.map((i: { id: string }) => i.id)).toEqual(ids);
+  });
+
+  it('rejects a retired item when itemIds is resupplied', async () => {
+    const { outfit, ids } = await seedOutfitWithItems(ownerId, 1);
+    const retired = await seedItem(ownerId, { retired: true });
+
+    const res = await patchOutfit(String(outfit._id), {
+      itemIds: [...ids, String(retired._id)],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toBe('Item is retired');
+    const doc = await Outfit.findById(outfit._id).lean();
+    expect(doc!.itemIds.map((each) => String(each))).toEqual(ids);
+  });
+
+  it('leaves an outfit alone when a member item is retired AFTER it was saved, on a name-only patch', async () => {
+    const { outfit, ids } = await seedOutfitWithItems(ownerId, 1);
+    await ClothingItem.updateOne({ _id: ids[0] }, { retired: true });
+
+    // `resolveOwnedItems` only runs when itemIds is (re)supplied — a rename
+    // must not force the caller to first remove a since-retired member.
+    const res = await patchOutfit(String(outfit._id), { name: 'Still fine' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.outfit.name).toBe('Still fine');
+    const doc = await Outfit.findById(outfit._id).lean();
+    expect(doc!.itemIds.map((each) => String(each))).toEqual(ids);
   });
 
   it('rejects duplicate itemIds with 400', async () => {

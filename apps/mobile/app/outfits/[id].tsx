@@ -603,9 +603,10 @@ export default function OutfitDetailScreen() {
               returns `items` AND `itemIds` precisely so a client can tell that
               something did not resolve; rendering only `items` would show a
               two-item outfit where the user saved three and say nothing about
-              it. There is no cascade delete in this system, so today this is
-              only reachable by a direct database deletion — the tolerance
-              exists so that degrades the screen instead of 500ing it. */}
+              it. There is no cascade delete in this system — deleting a
+              garment leaves its id on every outfit that used it — so this is
+              an ordinary state, and the tolerance is what degrades the screen
+              instead of 500ing it. */}
           {outfit.items.length < outfit.itemIds.length ? (
             <Text testID="outfit-detail-missing" style={styles.missing}>
               {missingLabel(outfit.itemIds.length - outfit.items.length)}

@@ -115,6 +115,7 @@ const item: PublicClothingItem = {
   colors: [],
   seasons: [],
   laundryStatus: 'available',
+  retired: false,
   wearCount: 0,
   source: 'manual',
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -486,10 +487,10 @@ describe('AddScreen', () => {
       // RNTL wraps each press in `act()`, which re-renders between them.
       // Review of Stage 5 Task 4 drove the handler directly and `uploadItem`
       // was called TWICE. That is two `POST /items`, two ClothingItem
-      // documents, two MinIO objects, two identical tiles — and no way to
-      // remove either, because this API has no `DELETE /items`. Only
-      // `busyRef`, written and read inside the one synchronous burst, stops
-      // it; `busy` state and the `disabled` prop are both a render too late.
+      // documents, two MinIO objects and two identical tiles, which the user
+      // then has to find and delete one of by hand. Only `busyRef`, written
+      // and read inside the one synchronous burst, stops it; `busy` state and
+      // the `disabled` prop are both a render too late.
       const press = onPressOf(screen.getByTestId('add-save'));
       let firstSavePromise: unknown;
       await act(async () => {

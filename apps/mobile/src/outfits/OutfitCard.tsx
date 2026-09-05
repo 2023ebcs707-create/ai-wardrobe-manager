@@ -61,8 +61,8 @@ export function OutfitCard({ outfit, onPress }: OutfitCardProps) {
    *
    * The cover itself is absent whenever the outfit's first item no longer
    * resolves. That is not an error state — there is no cascade delete in this
-   * system, so it is only reachable by a direct database deletion — and a
-   * gallery must degrade to a placeholder rather than fail.
+   * system, so deleting a garment leaves its id on every outfit that used it —
+   * and a gallery must degrade to a placeholder rather than fail.
    */
   const cover = typeof outfit.coverUrl === 'string' && outfit.coverUrl !== '' ? outfit.coverUrl : null;
   const name = outfit.name ?? UNNAMED_OUTFIT;

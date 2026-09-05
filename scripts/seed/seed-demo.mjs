@@ -79,6 +79,16 @@ const POSTS = {
 /** One item per user in the wash, so the laundry badge and the suggestion notice both have something to show. */
 const IN_LAUNDRY = { maya: ['trousers-1.jpg'], raj: ['tshirt-2.jpg'] };
 
+/**
+ * One item retired, so the Retired badge, the composer's exclusion and the
+ * suggestion notice's `excludedRetired` all have something to show.
+ *
+ * Deliberately a DIFFERENT garment from the in-laundry one above: the two
+ * states are independent and the demo should make that visible rather than
+ * leave one item wearing both and the distinction unillustrated.
+ */
+const RETIRED = { maya: ['dress-0.jpg'], raj: ['jacket-1.jpg'] };
+
 /** Wear history, so the tracking screens are not empty and `wearCount` is not uniformly zero. */
 const WEARS = {
   maya: [
@@ -87,6 +97,18 @@ const WEARS = {
     { outfit: 'Cold morning', daysAgo: 3, occasion: 'errands' },
   ],
   raj: [{ outfit: 'Office', daysAgo: 2, occasion: 'work' }],
+};
+
+/**
+ * Outfits planned for days that have not happened yet, so the calendar's
+ * forward half is not empty.
+ *
+ * A plan is NOT a wear: nothing here moves `wearCount` or `lastWornAt`, which
+ * is the whole reason `/outfit-plans` is a separate resource.
+ */
+const PLANS = {
+  maya: [{ outfit: 'Cold morning', inDays: 2, occasion: 'work' }],
+  raj: [{ outfit: 'Office', inDays: 4, occasion: 'work' }],
 };
 
 const log = (...a) => console.log(...a);
@@ -189,6 +211,21 @@ async function main() {
       for (const p of posts.body.posts ?? []) {
         if (p.author?.id && p.author.name === u.name) await api(`/community/posts/${p.id}`, { method: 'DELETE', token: s.token });
       }
+      // Plans BEFORE outfits: a plan outlives the outfit it names (deleting an
+      // outfit does not un-plan a day), so clearing outfits first would strand
+      // every plan as an unnamed row the next run cannot recognise.
+      // The window is wide because `/outfit-plans` requires both bounds and a
+      // plan can be any distance out; a year each way covers anything this
+      // script or a human demo has made.
+      const planFrom = new Date(Date.now() - 365 * 86_400_000).toISOString();
+      const planTo = new Date(Date.now() + 365 * 86_400_000).toISOString();
+      const plans = await api(
+        `/outfit-plans?from=${encodeURIComponent(planFrom)}&to=${encodeURIComponent(planTo)}`,
+        { token: s.token },
+      );
+      for (const p of plans.body.plans ?? []) {
+        await api(`/outfit-plans/${p.id}`, { method: 'DELETE', token: s.token });
+      }
       const outfits = await api('/outfits?limit=100', { token: s.token });
       for (const o of outfits.body.outfits ?? []) await api(`/outfits/${o.id}`, { method: 'DELETE', token: s.token });
       const items = await api('/items?limit=100', { token: s.token });
@@ -262,6 +299,48 @@ async function main() {
       if (res.status === 200) log(`${u.name}: ${f} -> in laundry`);
     }
 
+    // Idempotent by the item's own state rather than by a seen-set: `retired`
+    // is a value, not an append, so re-running simply asserts it again.
+    for (const f of RETIRED[u.key] ?? []) {
+      const item = byFile.get(f);
+      if (!item) continue;
+      const res = await api(`/items/${item.id}/retire`, { method: 'PATCH', token: s.token, json: { retired: true } });
+      if (res.status === 200) log(`${u.name}: ${f} -> retired`);
+    }
+
+    // A planned outfit a few days out, so the calendar's future days and the
+    // hollow planned marker have something to show.
+    //
+    // Reconciled on `(outfit, calendar day)` — the same natural key the wear
+    // events above use, and for the same reason: plans are appended, so a
+    // naive re-run stacks duplicates forever.
+    for (const p of PLANS[u.key] ?? []) {
+      const outfit = made.get(p.outfit);
+      if (!outfit) continue;
+      // Local NOON on the target day: the API refuses an instant in the past,
+      // and local midnight for a near day can already be gone. See
+      // `PublicOutfitPlan.plannedFor`.
+      const day = new Date();
+      day.setDate(day.getDate() + p.inDays);
+      day.setHours(12, 0, 0, 0);
+      const from = new Date(day);
+      from.setHours(0, 0, 0, 0);
+      const to = new Date(day);
+      to.setHours(23, 59, 59, 999);
+      const existingPlans = await api(
+        `/outfit-plans?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+        { token: s.token },
+      );
+      const already = (existingPlans.body.plans ?? []).some((row) => row.outfitId === outfit.id);
+      if (already) continue;
+      const res = await api('/outfit-plans', {
+        method: 'POST',
+        token: s.token,
+        json: { outfitId: outfit.id, plannedFor: day.toISOString(), occasion: p.occasion },
+      });
+      if (res.status === 201) log(`${u.name}: planned "${p.outfit}" in ${p.inDays}d (${p.occasion})`);
+    }
+
     const feed = await api('/community/posts?limit=100', { token: s.token });
     const captions = new Set((feed.body.posts ?? []).map((p) => p.caption));
     for (const p of POSTS[u.key] ?? []) {
@@ -307,8 +386,22 @@ async function main() {
   const posts = feed.body.posts ?? [];
   log(`community feed  ${posts.length} posts from ${new Set(posts.map((p) => p.author?.name)).size} users, ${posts.reduce((n, p) => n + p.likeCount, 0)} likes total`);
   const sugg = await api('/suggestions', { token: maya.token });
-  if (sugg.status === 200) log(`suggestions     ${sugg.body.suggestions.length} for Maya, ${sugg.body.excludedInLaundry} item(s) in the laundry`);
-  else log(`suggestions     unavailable (${sugg.status}) — the AI service may be starting`);
+  if (sugg.status === 200) {
+    log(
+      `suggestions     ${sugg.body.suggestions.length} for Maya, ` +
+        `${sugg.body.excludedInLaundry} item(s) in the laundry, ` +
+        `${sugg.body.excludedRetired} retired`,
+    );
+  } else log(`suggestions     unavailable (${sugg.status}) — the AI service may be starting`);
+  const planFrom = new Date().toISOString();
+  const planTo = new Date(Date.now() + 30 * 86_400_000).toISOString();
+  const planned = await api(
+    `/outfit-plans?from=${encodeURIComponent(planFrom)}&to=${encodeURIComponent(planTo)}`,
+    { token: maya.token },
+  );
+  if (planned.status === 200) {
+    log(`planned         ${planned.body.plans.length} upcoming outfit(s) for Maya`);
+  }
   log(`\nSign in as ${USERS.map((u) => u.email).join(' or ')} with password ${PASSWORD}`);
 }
 

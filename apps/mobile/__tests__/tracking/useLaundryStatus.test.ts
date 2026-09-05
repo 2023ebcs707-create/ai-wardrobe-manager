@@ -44,6 +44,7 @@ function item(id: string, laundryStatus: 'available' | 'in_laundry'): PublicClot
     colors: [],
     seasons: [],
     laundryStatus,
+    retired: false,
     wearCount: 2,
     source: 'manual',
     createdAt: '2026-08-01T10:00:00.000Z',
